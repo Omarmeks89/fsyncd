@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 )
 
 // DefaultBufferSize for intermediate buffer
@@ -42,17 +44,17 @@ type SyncCommand struct {
 	// for synchronized objects
 	SyncPairs []SyncPair
 
-	// buffer to store execution report
-	Report strings.Builder
+	log *logrus.Logger
 }
 
-func MakeSyncCommand(SrcDiffPercent int) SyncCommand {
+func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand {
 	toDel := make([]string, 0, DefaultSyncObjectsSize)
 	pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
 	return SyncCommand{
 		ToDelete:       toDel,
 		SyncPairs:      pairs,
 		SrcDiffPercent: SrcDiffPercent,
+		log:            log,
 	}
 }
 
@@ -86,7 +88,14 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 		if ok, err = s.Compare(&src.Dirs[i], &dst.Dirs[i]); !ok {
 			// means directories are different (diff is greater that x%)
 			// create notification for user
-			s.makeReport()
+			s.log.Warn(
+				fmt.Sprintf(
+					"can`t sync '%s' > '%s' (diff > %d%%)",
+					src.Dirs[i].Root,
+					dst.Dirs[i].Root,
+					s.SrcDiffPercent,
+				),
+			)
 			continue
 		}
 
@@ -181,10 +190,6 @@ func (s *SyncCommand) Compare(src Container, dest Container) (
 
 	// check that diff is less than max possible
 	return percent < s.SrcDiffPercent, err
-}
-
-func (s *SyncCommand) makeReport() {
-
 }
 
 func (s *SyncCommand) mergePath(str ...string) (res string, err error) {
@@ -288,15 +293,22 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) {
 	return err
 }
 
+// fclose internal function for deferred error handling from closed files.
+// Can close readers and writers
+func fclose(log *logrus.Logger, file io.ReadWriteCloser) {
+	if err := file.Close(); err != nil {
+		log.Error(err)
+	}
+}
+
 // Objects return count of nested directories
 func (sm *SyncMeta) Objects() int {
 	return len(sm.Dirs)
 }
 
 // Sync files pair
-func Sync(ctx context.Context, pair SyncPair) (err error) {
-	var srcFile io.ReadCloser
-	var dstFile io.WriteCloser
+func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) {
+	var srcFile, dstFile io.ReadWriteCloser
 
 	// open src
 	srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, DefaultRdPerm)
@@ -304,7 +316,7 @@ func Sync(ctx context.Context, pair SyncPair) (err error) {
 		return err
 	}
 
-	defer srcFile.Close()
+	defer fclose(log, srcFile)
 
 	// open dst (create file if not exists)
 	dstFile, err = os.OpenFile(pair.Src, os.O_CREATE|os.O_RDWR, DefaultWrPerm)
@@ -312,7 +324,7 @@ func Sync(ctx context.Context, pair SyncPair) (err error) {
 		return err
 	}
 
-	defer dstFile.Close()
+	defer fclose(log, dstFile)
 
 	// handle ctx or signal (graceful shutdown)
 	// later we can`t stop operation - it may break file...
