@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (41.6%)</option>
+				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (47.5%)</option>
 				
 				<option value="file1">github.com/Omarmeks89/fsyncd/main.go (0.0%)</option>
 				
@@ -77,7 +77,9 @@
 package main
 
 import (
+        "context"
         "fmt"
+        "io"
         "os"
         "strings"
         "time"
@@ -86,81 +88,41 @@ import (
 // DefaultBufferSize for intermediate buffer
 const DefaultBufferSize = 4096
 
+// DefaultSyncObjectsSize set allocation size for nested SyncCommand collections
+const DefaultSyncObjectsSize = 16
+
 const DefaultRdPerm = 0o0644
 const DefaultWrPerm = 0o0666
 
-// file, err = os.OpenFile(srcPath, os.O_RDONLY, DefaultRdPerm)
-// if err != nil {
-// return err
-// }
-// defer Fclose(file)
-//
-// wFile, err = os.OpenFile(dstPath, os.O_RDWR|os.O_CREATE, DefaultWrPerm)
-// if err != nil {
-// return err
-// }
-// defer Fclose(wFile)
-
-// Prepare file in src with dest directory
-// func Prepare(reader io.Reader, writer io.Writer) (err error) {
-//        var buf = make([]byte, DefaultBufferSize)
-//        var n, m int
-//
-//        _ = io.CopyBuffer()
-//
-//        for {
-//                n, err = reader.Read(buf)
-//                if err != nil {
-//                        if err == io.EOF {
-//                                err = nil
-//                        }
-//                        return err
-//                }
-//
-//                if n == 0 {
-//                        return fmt.Errorf("no data readed")
-//                }
-//
-//                if m, err = writer.Write(buf[:n]); err != nil {
-//                        return err
-//                }
-//
-//                if m != n {
-//                        return fmt.Errorf("write less as readed")
-//                }
-//        }
-// }
+var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
 
 type SyncPair struct {
-        Src      string
-        Dst      string
-        FileName string
+        // Src full path to source file
+        Src string
+
+        // Dst full path to destination file
+        Dst string
 }
 
 type SyncCommand struct {
-        Src string
-        Dst string
-
         // max possible difference between directories
         SrcDiffPercent int
 
-        ToDelete  []string
+        // ToDelete contain full paths for files have to be deleted
+        ToDelete []string
+
+        // SyncPairs (src, dst) contain full source and destination paths
+        // for synchronized objects
         SyncPairs []SyncPair
 
         // buffer to store execution report
         Report strings.Builder
 }
 
-func MakeSyncCommand(
-        srcPath string,
-        dstPath string,
-        SrcDiffPercent int,
-) SyncCommand <span class="cov8" title="1">{
-        toDel := make([]string, 0, 16)
-        pairs := make([]SyncPair, 0, 16)
+func MakeSyncCommand(SrcDiffPercent int) SyncCommand <span class="cov8" title="1">{
+        toDel := make([]string, 0, DefaultSyncObjectsSize)
+        pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
         return SyncCommand{
-                Src:            srcPath,
-                Dst:            dstPath,
                 ToDelete:       toDel,
                 SyncPairs:      pairs,
                 SrcDiffPercent: SrcDiffPercent,
@@ -169,25 +131,31 @@ func MakeSyncCommand(
 
 // Prepare meta information for synchronization
 // Return error if sync is impossible
-func (s *SyncCommand) Prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov0" title="0">{
+func (s *SyncCommand) Prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov8" title="1">{
         if s == nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("nil receiver not allowed")
         }</span>
-        <span class="cov0" title="0">return s.prepare(src, dst)</span>
+        <span class="cov8" title="1">return s.prepare(src, dst)</span>
 }
 
 // prepare nested do all work
-func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov0" title="0">{
+func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov8" title="1">{
         var ok bool
 
-        // check size diff (less than x%) between src and dest
-        if ok, err = s.Compare(&amp;src, &amp;dst); !ok </span><span class="cov0" title="0">{
+        // check size diff (less than x%) between src and dest directories
+        // (compare nested directories count)
+        if ok, err = s.Compare(&amp;src, &amp;dst); !ok </span><span class="cov8" title="1">{
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
                 // domain directories are different - break
-                return err
-        }</span>
+                // return signal error
+                <span class="cov8" title="1">return TooLargeDifferenceErr</span>
+        }
 
         // compare fetched metadata - check size diff
-        <span class="cov0" title="0">for i := 0; i &lt; src.Objects(); i++ </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">for i := 0; i &lt; src.Objects(); i++ </span><span class="cov8" title="1">{
                 if ok, err = s.Compare(&amp;src.Dirs[i], &amp;dst.Dirs[i]); !ok </span><span class="cov0" title="0">{
                         // means directories are different (diff is greater that x%)
                         // create notification for user
@@ -196,28 +164,38 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span clas
                 }
 
                 // add objects for delete (not in master) -&gt; Delete()
-                <span class="cov0" title="0">if err = s.configureSyncActions(src.Dirs[i], src.Dirs[i]); err != nil </span><span class="cov0" title="0">{
+                <span class="cov8" title="1">if err = s.configureSyncActions(src.Dirs[i], dst.Dirs[i]); err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
         }
 
-        <span class="cov0" title="0">return err</span>
+        <span class="cov8" title="1">return err</span>
 }
 
 // configureSyncActions generate tasks to sync and tasks to delete
-func (s *SyncCommand) configureSyncActions(src Directory, dst Directory) error <span class="cov8" title="1">{
+func (s *SyncCommand) configureSyncActions(
+        src Directory,
+        dst Directory,
+) (err error) <span class="cov8" title="1">{
+        var srcPath, dstPath, fPath string
+
         for k, v := range src.Files </span><span class="cov8" title="1">{
-                if _, ok := dst.Files[k]; !ok </span><span class="cov8" title="1">{
-                        // there is no same file in dest directory - skip
-                        continue</span>
-                }
+                srcPath, err = s.mergePath(s.prepareRoot(src.Root), "/", k)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">dstPath, err = s.mergePath(s.prepareRoot(dst.Root), "/", k)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
 
                 <span class="cov8" title="1">syncPair := SyncPair{
-                        Src:      src.Root,
-                        Dst:      dst.Root,
-                        FileName: k,
+                        Src: srcPath,
+                        Dst: dstPath,
                 }
 
+                // if file by key not exists we will handle empty time value
                 if v.ModTime.Before(dst.Files[k].ModTime) </span><span class="cov8" title="1">{
                         // rotate roots if file in destination directory
                         // have newer version (latest modification time) than
@@ -225,17 +203,16 @@ func (s *SyncCommand) configureSyncActions(src Directory, dst Directory) error <
                         syncPair.Src, syncPair.Dst = syncPair.Dst, syncPair.Src
                 }</span>
 
-                <span class="cov8" title="1">delete(dst.Files, k)
-                s.SyncPairs = append(s.SyncPairs, syncPair)</span>
+                <span class="cov8" title="1">if _, ok := dst.Files[k]; ok </span><span class="cov8" title="1">{
+                        delete(dst.Files, k)
+                }</span>
+
+                <span class="cov8" title="1">s.SyncPairs = append(s.SyncPairs, syncPair)</span>
         }
 
         <span class="cov8" title="1">for k, _ := range dst.Files </span><span class="cov8" title="1">{
-                root := dst.Root
-                if root == "" </span><span class="cov8" title="1">{
-                        root = "."
-                }</span>
 
-                <span class="cov8" title="1">fPath, err := s.mergePath(root, "/", k)
+                fPath, err = s.mergePath(s.prepareRoot(dst.Root), "/", k)
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
@@ -245,6 +222,13 @@ func (s *SyncCommand) configureSyncActions(src Directory, dst Directory) error <
         }
 
         <span class="cov8" title="1">return nil</span>
+}
+
+func (s *SyncCommand) prepareRoot(root string) string <span class="cov8" title="1">{
+        if root == "" </span><span class="cov8" title="1">{
+                return "."
+        }</span>
+        <span class="cov8" title="1">return root</span>
 }
 
 // Compare src and dest directory
@@ -272,18 +256,6 @@ func (s *SyncCommand) Compare(src Container, dest Container) (
         return percent &lt; s.SrcDiffPercent, err</span>
 }
 
-// Sync prepared directories
-func (s *SyncCommand) Sync() (err error) <span class="cov0" title="0">{
-        if s == nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("nil receiver not allowed")
-        }</span>
-
-        // check prepared data
-
-        // run parallel
-        <span class="cov0" title="0">return err</span>
-}
-
 func (s *SyncCommand) makeReport() {<span class="cov0" title="0">
 
 }</span>
@@ -307,8 +279,11 @@ type Container interface {
 // Directory represent files collection where key is a full path
 // and value is modification time
 type Directory struct {
+        // Files collection of file names (as key) and meta information (as value)
         Files map[string]FileMeta
-        Root  string
+
+        // Root path to directory (without filename)
+        Root string
 }
 
 func (dir *Directory) Objects() int <span class="cov8" title="1">{
@@ -317,12 +292,14 @@ func (dir *Directory) Objects() int <span class="cov8" title="1">{
 
 // FileMeta all required meta data at the moment
 type FileMeta struct {
+        // ModTime contain last modification time
         ModTime time.Time
 }
 
 // SyncMeta collect meta information about synchronized
 // objects
 type SyncMeta struct {
+        // slice of directories for sync
         Dirs []Directory
 }
 
@@ -385,9 +362,48 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) <span class="cov0" title="
 }
 
 // Objects return count of nested directories
-func (sm *SyncMeta) Objects() int <span class="cov0" title="0">{
+func (sm *SyncMeta) Objects() int <span class="cov8" title="1">{
         return len(sm.Dirs)
 }</span>
+
+// Sync files pair
+func Sync(ctx context.Context, pair SyncPair) (err error) <span class="cov0" title="0">{
+        var srcFile io.ReadCloser
+        var dstFile io.WriteCloser
+
+        // open src
+        srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, DefaultRdPerm)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">defer srcFile.Close()
+
+        // open dst (create file if not exists)
+        dstFile, err = os.OpenFile(pair.Src, os.O_CREATE|os.O_RDWR, DefaultWrPerm)
+        if err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">defer dstFile.Close()
+
+        // handle ctx or signal (graceful shutdown)
+        // later we can`t stop operation - it may break file...
+        select </span>{
+        case &lt;-ctx.Done():<span class="cov0" title="0">
+                return ctx.Err()</span>
+        default:<span class="cov0" title="0">
+                break</span>
+        }
+
+        // alloc buffer if files opened
+        <span class="cov0" title="0">buf := make([]byte, DefaultBufferSize)
+        if _, err = io.CopyBuffer(dstFile, srcFile, buf); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
+}
 </pre>
 		
 		<pre class="file" id="file1" style="display: none">package main

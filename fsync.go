@@ -69,8 +69,13 @@ func (s *SyncCommand) Prepare(src SyncMeta, dst SyncMeta) (err error) {
 func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 	var ok bool
 
-	// check size diff (less than x%) between src and dest
+	// check size diff (less than x%) between src and dest directories
+	// (compare nested directories count)
 	if ok, err = s.Compare(&src, &dst); !ok {
+		if err != nil {
+			return err
+		}
+
 		// domain directories are different - break
 		// return signal error
 		return TooLargeDifferenceErr

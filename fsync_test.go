@@ -322,9 +322,7 @@ func TestSyncCommand_Prepare(t *testing.T) {
 		t.Run(
 			tt.name, func(t *testing.T) {
 				cmd := MakeSyncCommand(35)
-				err := cmd.Prepare(tt.src, tt.dst)
-
-				require.NoError(t, err)
+				_ = cmd.Prepare(tt.src, tt.dst)
 
 				sort.Slice(
 					tt.res, func(i, j int) bool {
@@ -339,6 +337,71 @@ func TestSyncCommand_Prepare(t *testing.T) {
 				)
 
 				require.EqualExportedValues(t, tt.res, cmd.SyncPairs)
+			},
+		)
+	}
+}
+
+func TestSyncCommand_PrepareReturnError(t *testing.T) {
+	tm := time.Now()
+
+	tests := []struct {
+		name string
+		src  SyncMeta
+		dst  SyncMeta
+		err  error
+	}{
+		{
+			name: "test return signal error (TooLargeDifferenceErr)",
+			src: SyncMeta{
+				Dirs: []Directory{
+					{
+						Files: map[string]FileMeta{
+							"test1.txt": {
+								ModTime: tm,
+							},
+							"test3.txt": {
+								ModTime: tm,
+							},
+						},
+						Root: "/home/master/sync-dir",
+					},
+					{
+						Files: map[string]FileMeta{
+							"test3.txt": {
+								ModTime: tm,
+							},
+							"test4.txt": {
+								ModTime: tm,
+							},
+						},
+						Root: "/home/master/sync-dir2",
+					},
+				},
+			},
+			dst: SyncMeta{
+				Dirs: []Directory{
+					{
+						Files: map[string]FileMeta{
+							"test1.txt": {
+								ModTime: tm,
+							},
+						},
+						Root: "/cloud/sync-dir",
+					},
+				},
+			},
+			err: TooLargeDifferenceErr,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				// difference in directories count is 50% - we got error
+				cmd := MakeSyncCommand(30)
+				err := cmd.Prepare(tt.src, tt.dst)
+
+				require.EqualError(t, err, tt.err.Error())
 			},
 		)
 	}
