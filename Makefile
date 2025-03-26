@@ -27,3 +27,6 @@ run_vet:
 build_test_coverage:
 	go test ./... -coverprofile=$(COVERAGE_SRC) -coverpkg ./...
 	go tool cover -html=$(COVERAGE_SRC) -o $(COVERAGE_DST)
+
+clear:
+	rm -rf $(APP)

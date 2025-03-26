@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/stretchr/testify/require"
+	"sort"
 	"testing"
 	"time"
 )
@@ -62,7 +63,7 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand("", "", tt.diffPercent)
+				cmd := MakeSyncCommand(tt.diffPercent)
 				_ = cmd.configureSyncActions(tt.srcD, tt.dstD)
 				require.Equal(t, tt.wait, cmd.ToDelete)
 			},
@@ -131,7 +132,7 @@ func TestSyncCommand_Compare(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand("", "", tt.diffPercent)
+				cmd := MakeSyncCommand(tt.diffPercent)
 				status, _ := cmd.Compare(tt.src, tt.dest)
 
 				require.Equal(t, tt.wantStatus, status)
@@ -156,7 +157,7 @@ func TestSyncCommand_mergeString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand("", "", 0)
+				cmd := MakeSyncCommand(0)
 				str, _ := cmd.mergePath(tt.str...)
 				require.Equal(t, tt.wantRes, str)
 			},
@@ -193,20 +194,151 @@ func TestSyncCommand_configureSyncActions1(t *testing.T) {
 				Root: "/cloud/data",
 			},
 			res: SyncPair{
-				Src:      "/cloud/data",
-				Dst:      "/home/user",
-				FileName: "test.txt",
+				Src: "/cloud/data/test.txt",
+				Dst: "/home/user/test.txt",
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand("", "", 30)
+				cmd := MakeSyncCommand(30)
 				_ = cmd.configureSyncActions(tt.src, tt.dst)
 
 				// single SyncPair have to equal to sample
 				require.Equal(t, tt.res, cmd.SyncPairs[0])
+			},
+		)
+	}
+}
+
+func TestSyncCommand_Prepare(t *testing.T) {
+	tm := time.Now()
+
+	tests := []struct {
+		name string
+		src  SyncMeta
+		dst  SyncMeta
+		err  error
+		res  []SyncPair
+	}{
+		{
+			name: "test create test2.txt in /cloud/sync-dir directory",
+			src: SyncMeta{
+				Dirs: []Directory{
+					{
+						Files: map[string]FileMeta{
+							"test1.txt": {
+								ModTime: tm,
+							},
+							"test2.txt": {
+								ModTime: tm,
+							},
+							"test3.txt": {
+								ModTime: tm,
+							},
+						},
+						Root: "/home/master/sync-dir",
+					},
+				},
+			},
+			dst: SyncMeta{
+				Dirs: []Directory{
+					{
+						Files: map[string]FileMeta{
+							"test1.txt": {
+								ModTime: tm,
+							},
+							"test3.txt": {
+								ModTime: tm,
+							},
+						},
+						Root: "/cloud/sync-dir",
+					},
+				},
+			},
+			err: nil,
+			res: []SyncPair{
+				{
+					Src: "/home/master/sync-dir/test1.txt",
+					Dst: "/cloud/sync-dir/test1.txt",
+				},
+				{
+					Src: "/home/master/sync-dir/test2.txt",
+					Dst: "/cloud/sync-dir/test2.txt",
+				},
+				{
+					Src: "/home/master/sync-dir/test3.txt",
+					Dst: "/cloud/sync-dir/test3.txt",
+				},
+			},
+		},
+		{
+			name: "test set test1.txt from /cloud/sync-dir directory as master (latest change)",
+			src: SyncMeta{
+				Dirs: []Directory{
+					{
+						Files: map[string]FileMeta{
+							"test1.txt": {
+								ModTime: tm,
+							},
+							"test3.txt": {
+								ModTime: tm,
+							},
+						},
+						Root: "/home/master/sync-dir",
+					},
+				},
+			},
+			dst: SyncMeta{
+				Dirs: []Directory{
+					{
+						Files: map[string]FileMeta{
+							"test1.txt": {
+								ModTime: tm.Add(10 * time.Minute),
+							},
+							"test3.txt": {
+								ModTime: tm,
+							},
+						},
+						Root: "/cloud/sync-dir",
+					},
+				},
+			},
+			err: nil,
+			res: []SyncPair{
+				{
+					Src: "/home/master/sync-dir/test3.txt",
+					Dst: "/cloud/sync-dir/test3.txt",
+				},
+				{
+					Src: "/cloud/sync-dir/test1.txt",
+					Dst: "/home/master/sync-dir/test1.txt",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				cmd := MakeSyncCommand(35)
+				err := cmd.Prepare(tt.src, tt.dst)
+
+				require.NoError(t, err)
+
+				sort.Slice(
+					tt.res, func(i, j int) bool {
+						return tt.res[i].Src > tt.res[j].Src
+					},
+				)
+
+				sort.Slice(
+					cmd.SyncPairs, func(i, j int) bool {
+						return cmd.SyncPairs[i].Src > cmd.SyncPairs[j].Src
+					},
+				)
+
+				require.EqualExportedValues(t, tt.res, cmd.SyncPairs)
 			},
 		)
 	}

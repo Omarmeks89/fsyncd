@@ -4,7 +4,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -13,81 +15,41 @@ import (
 // DefaultBufferSize for intermediate buffer
 const DefaultBufferSize = 4096
 
+// DefaultSyncObjectsSize set allocation size for nested SyncCommand collections
+const DefaultSyncObjectsSize = 16
+
 const DefaultRdPerm = 0o0644
 const DefaultWrPerm = 0o0666
 
-// file, err = os.OpenFile(srcPath, os.O_RDONLY, DefaultRdPerm)
-// if err != nil {
-// return err
-// }
-// defer Fclose(file)
-//
-// wFile, err = os.OpenFile(dstPath, os.O_RDWR|os.O_CREATE, DefaultWrPerm)
-// if err != nil {
-// return err
-// }
-// defer Fclose(wFile)
-
-// Prepare file in src with dest directory
-// func Prepare(reader io.Reader, writer io.Writer) (err error) {
-//	var buf = make([]byte, DefaultBufferSize)
-//	var n, m int
-//
-//	_ = io.CopyBuffer()
-//
-//	for {
-//		n, err = reader.Read(buf)
-//		if err != nil {
-//			if err == io.EOF {
-//				err = nil
-//			}
-//			return err
-//		}
-//
-//		if n == 0 {
-//			return fmt.Errorf("no data readed")
-//		}
-//
-//		if m, err = writer.Write(buf[:n]); err != nil {
-//			return err
-//		}
-//
-//		if m != n {
-//			return fmt.Errorf("write less as readed")
-//		}
-//	}
-// }
+var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
 
 type SyncPair struct {
-	Src      string
-	Dst      string
-	FileName string
+	// Src full path to source file
+	Src string
+
+	// Dst full path to destination file
+	Dst string
 }
 
 type SyncCommand struct {
-	Src string
-	Dst string
-
 	// max possible difference between directories
 	SrcDiffPercent int
 
-	ToDelete  []string
+	// ToDelete contain full paths for files have to be deleted
+	ToDelete []string
+
+	// SyncPairs (src, dst) contain full source and destination paths
+	// for synchronized objects
 	SyncPairs []SyncPair
 
 	// buffer to store execution report
 	Report strings.Builder
 }
 
-func MakeSyncCommand(
-	srcPath string,
-	dstPath string,
-	SrcDiffPercent int,
-) SyncCommand {
-	toDel := make([]string, 0, 16)
-	pairs := make([]SyncPair, 0, 16)
+func MakeSyncCommand(SrcDiffPercent int) SyncCommand {
+	toDel := make([]string, 0, DefaultSyncObjectsSize)
+	pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
 	return SyncCommand{
-		Src:            srcPath,
-		Dst:            dstPath,
 		ToDelete:       toDel,
 		SyncPairs:      pairs,
 		SrcDiffPercent: SrcDiffPercent,
@@ -110,7 +72,8 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 	// check size diff (less than x%) between src and dest
 	if ok, err = s.Compare(&src, &dst); !ok {
 		// domain directories are different - break
-		return err
+		// return signal error
+		return TooLargeDifferenceErr
 	}
 
 	// compare fetched metadata - check size diff
@@ -123,7 +86,7 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 		}
 
 		// add objects for delete (not in master) -> Delete()
-		if err = s.configureSyncActions(src.Dirs[i], src.Dirs[i]); err != nil {
+		if err = s.configureSyncActions(src.Dirs[i], dst.Dirs[i]); err != nil {
 			return err
 		}
 	}
@@ -132,19 +95,29 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 }
 
 // configureSyncActions generate tasks to sync and tasks to delete
-func (s *SyncCommand) configureSyncActions(src Directory, dst Directory) error {
+func (s *SyncCommand) configureSyncActions(
+	src Directory,
+	dst Directory,
+) (err error) {
+	var srcPath, dstPath, fPath string
+
 	for k, v := range src.Files {
-		if _, ok := dst.Files[k]; !ok {
-			// there is no same file in dest directory - skip
-			continue
+		srcPath, err = s.mergePath(s.prepareRoot(src.Root), "/", k)
+		if err != nil {
+			return err
+		}
+
+		dstPath, err = s.mergePath(s.prepareRoot(dst.Root), "/", k)
+		if err != nil {
+			return err
 		}
 
 		syncPair := SyncPair{
-			Src:      src.Root,
-			Dst:      dst.Root,
-			FileName: k,
+			Src: srcPath,
+			Dst: dstPath,
 		}
 
+		// if file by key not exists we will handle empty time value
 		if v.ModTime.Before(dst.Files[k].ModTime) {
 			// rotate roots if file in destination directory
 			// have newer version (latest modification time) than
@@ -152,17 +125,16 @@ func (s *SyncCommand) configureSyncActions(src Directory, dst Directory) error {
 			syncPair.Src, syncPair.Dst = syncPair.Dst, syncPair.Src
 		}
 
-		delete(dst.Files, k)
+		if _, ok := dst.Files[k]; ok {
+			delete(dst.Files, k)
+		}
+
 		s.SyncPairs = append(s.SyncPairs, syncPair)
 	}
 
 	for k, _ := range dst.Files {
-		root := dst.Root
-		if root == "" {
-			root = "."
-		}
 
-		fPath, err := s.mergePath(root, "/", k)
+		fPath, err = s.mergePath(s.prepareRoot(dst.Root), "/", k)
 		if err != nil {
 			return err
 		}
@@ -172,6 +144,13 @@ func (s *SyncCommand) configureSyncActions(src Directory, dst Directory) error {
 	}
 
 	return nil
+}
+
+func (s *SyncCommand) prepareRoot(root string) string {
+	if root == "" {
+		return "."
+	}
+	return root
 }
 
 // Compare src and dest directory
@@ -199,18 +178,6 @@ func (s *SyncCommand) Compare(src Container, dest Container) (
 	return percent < s.SrcDiffPercent, err
 }
 
-// Sync prepared directories
-func (s *SyncCommand) Sync() (err error) {
-	if s == nil {
-		return fmt.Errorf("nil receiver not allowed")
-	}
-
-	// check prepared data
-
-	// run parallel
-	return err
-}
-
 func (s *SyncCommand) makeReport() {
 
 }
@@ -234,8 +201,11 @@ type Container interface {
 // Directory represent files collection where key is a full path
 // and value is modification time
 type Directory struct {
+	// Files collection of file names (as key) and meta information (as value)
 	Files map[string]FileMeta
-	Root  string
+
+	// Root path to directory (without filename)
+	Root string
 }
 
 func (dir *Directory) Objects() int {
@@ -244,12 +214,14 @@ func (dir *Directory) Objects() int {
 
 // FileMeta all required meta data at the moment
 type FileMeta struct {
+	// ModTime contain last modification time
 	ModTime time.Time
 }
 
 // SyncMeta collect meta information about synchronized
 // objects
 type SyncMeta struct {
+	// slice of directories for sync
 	Dirs []Directory
 }
 
@@ -314,4 +286,43 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) {
 // Objects return count of nested directories
 func (sm *SyncMeta) Objects() int {
 	return len(sm.Dirs)
+}
+
+// Sync files pair
+func Sync(ctx context.Context, pair SyncPair) (err error) {
+	var srcFile io.ReadCloser
+	var dstFile io.WriteCloser
+
+	// open src
+	srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, DefaultRdPerm)
+	if err != nil {
+		return err
+	}
+
+	defer srcFile.Close()
+
+	// open dst (create file if not exists)
+	dstFile, err = os.OpenFile(pair.Src, os.O_CREATE|os.O_RDWR, DefaultWrPerm)
+	if err != nil {
+		return err
+	}
+
+	defer dstFile.Close()
+
+	// handle ctx or signal (graceful shutdown)
+	// later we can`t stop operation - it may break file...
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		break
+	}
+
+	// alloc buffer if files opened
+	buf := make([]byte, DefaultBufferSize)
+	if _, err = io.CopyBuffer(dstFile, srcFile, buf); err != nil {
+		return err
+	}
+
+	return err
 }
