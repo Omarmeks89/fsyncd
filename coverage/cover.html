@@ -1,0 +1,430 @@
+
+<!DOCTYPE html>
+<html>
+	<head>
+		<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+		<title>fsyncd: Go Coverage Report</title>
+		<style>
+			body {
+				background: black;
+				color: rgb(80, 80, 80);
+			}
+			body, pre, #legend span {
+				font-family: Menlo, monospace;
+				font-weight: bold;
+			}
+			#topbar {
+				background: black;
+				position: fixed;
+				top: 0; left: 0; right: 0;
+				height: 42px;
+				border-bottom: 1px solid rgb(80, 80, 80);
+			}
+			#content {
+				margin-top: 50px;
+			}
+			#nav, #legend {
+				float: left;
+				margin-left: 10px;
+			}
+			#legend {
+				margin-top: 12px;
+			}
+			#nav {
+				margin-top: 10px;
+			}
+			#legend span {
+				margin: 0 5px;
+			}
+			.cov0 { color: rgb(192, 0, 0) }
+.cov1 { color: rgb(128, 128, 128) }
+.cov2 { color: rgb(116, 140, 131) }
+.cov3 { color: rgb(104, 152, 134) }
+.cov4 { color: rgb(92, 164, 137) }
+.cov5 { color: rgb(80, 176, 140) }
+.cov6 { color: rgb(68, 188, 143) }
+.cov7 { color: rgb(56, 200, 146) }
+.cov8 { color: rgb(44, 212, 149) }
+.cov9 { color: rgb(32, 224, 152) }
+.cov10 { color: rgb(20, 236, 155) }
+
+		</style>
+	</head>
+	<body>
+		<div id="topbar">
+			<div id="nav">
+				<select id="files">
+				
+				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (41.6%)</option>
+				
+				<option value="file1">github.com/Omarmeks89/fsyncd/main.go (0.0%)</option>
+				
+				</select>
+			</div>
+			<div id="legend">
+				<span>not tracked</span>
+			
+				<span class="cov0">not covered</span>
+				<span class="cov8">covered</span>
+			
+			</div>
+		</div>
+		<div id="content">
+		
+		<pre class="file" id="file0" style="display: none">// Module contain functions and types to sync data
+// between fs
+
+package main
+
+import (
+        "fmt"
+        "os"
+        "strings"
+        "time"
+)
+
+// DefaultBufferSize for intermediate buffer
+const DefaultBufferSize = 4096
+
+const DefaultRdPerm = 0o0644
+const DefaultWrPerm = 0o0666
+
+// file, err = os.OpenFile(srcPath, os.O_RDONLY, DefaultRdPerm)
+// if err != nil {
+// return err
+// }
+// defer Fclose(file)
+//
+// wFile, err = os.OpenFile(dstPath, os.O_RDWR|os.O_CREATE, DefaultWrPerm)
+// if err != nil {
+// return err
+// }
+// defer Fclose(wFile)
+
+// Prepare file in src with dest directory
+// func Prepare(reader io.Reader, writer io.Writer) (err error) {
+//        var buf = make([]byte, DefaultBufferSize)
+//        var n, m int
+//
+//        _ = io.CopyBuffer()
+//
+//        for {
+//                n, err = reader.Read(buf)
+//                if err != nil {
+//                        if err == io.EOF {
+//                                err = nil
+//                        }
+//                        return err
+//                }
+//
+//                if n == 0 {
+//                        return fmt.Errorf("no data readed")
+//                }
+//
+//                if m, err = writer.Write(buf[:n]); err != nil {
+//                        return err
+//                }
+//
+//                if m != n {
+//                        return fmt.Errorf("write less as readed")
+//                }
+//        }
+// }
+
+type SyncPair struct {
+        Src      string
+        Dst      string
+        FileName string
+}
+
+type SyncCommand struct {
+        Src string
+        Dst string
+
+        // max possible difference between directories
+        SrcDiffPercent int
+
+        ToDelete  []string
+        SyncPairs []SyncPair
+
+        // buffer to store execution report
+        Report strings.Builder
+}
+
+func MakeSyncCommand(
+        srcPath string,
+        dstPath string,
+        SrcDiffPercent int,
+) SyncCommand <span class="cov8" title="1">{
+        toDel := make([]string, 0, 16)
+        pairs := make([]SyncPair, 0, 16)
+        return SyncCommand{
+                Src:            srcPath,
+                Dst:            dstPath,
+                ToDelete:       toDel,
+                SyncPairs:      pairs,
+                SrcDiffPercent: SrcDiffPercent,
+        }
+}</span>
+
+// Prepare meta information for synchronization
+// Return error if sync is impossible
+func (s *SyncCommand) Prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov0" title="0">{
+        if s == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("nil receiver not allowed")
+        }</span>
+        <span class="cov0" title="0">return s.prepare(src, dst)</span>
+}
+
+// prepare nested do all work
+func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov0" title="0">{
+        var ok bool
+
+        // check size diff (less than x%) between src and dest
+        if ok, err = s.Compare(&amp;src, &amp;dst); !ok </span><span class="cov0" title="0">{
+                // domain directories are different - break
+                return err
+        }</span>
+
+        // compare fetched metadata - check size diff
+        <span class="cov0" title="0">for i := 0; i &lt; src.Objects(); i++ </span><span class="cov0" title="0">{
+                if ok, err = s.Compare(&amp;src.Dirs[i], &amp;dst.Dirs[i]); !ok </span><span class="cov0" title="0">{
+                        // means directories are different (diff is greater that x%)
+                        // create notification for user
+                        s.makeReport()
+                        continue</span>
+                }
+
+                // add objects for delete (not in master) -&gt; Delete()
+                <span class="cov0" title="0">if err = s.configureSyncActions(src.Dirs[i], src.Dirs[i]); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+        }
+
+        <span class="cov0" title="0">return err</span>
+}
+
+// configureSyncActions generate tasks to sync and tasks to delete
+func (s *SyncCommand) configureSyncActions(src Directory, dst Directory) error <span class="cov8" title="1">{
+        for k, v := range src.Files </span><span class="cov8" title="1">{
+                if _, ok := dst.Files[k]; !ok </span><span class="cov8" title="1">{
+                        // there is no same file in dest directory - skip
+                        continue</span>
+                }
+
+                <span class="cov8" title="1">syncPair := SyncPair{
+                        Src:      src.Root,
+                        Dst:      dst.Root,
+                        FileName: k,
+                }
+
+                if v.ModTime.Before(dst.Files[k].ModTime) </span><span class="cov8" title="1">{
+                        // rotate roots if file in destination directory
+                        // have newer version (latest modification time) than
+                        // file in master directory
+                        syncPair.Src, syncPair.Dst = syncPair.Dst, syncPair.Src
+                }</span>
+
+                <span class="cov8" title="1">delete(dst.Files, k)
+                s.SyncPairs = append(s.SyncPairs, syncPair)</span>
+        }
+
+        <span class="cov8" title="1">for k, _ := range dst.Files </span><span class="cov8" title="1">{
+                root := dst.Root
+                if root == "" </span><span class="cov8" title="1">{
+                        root = "."
+                }</span>
+
+                <span class="cov8" title="1">fPath, err := s.mergePath(root, "/", k)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                // add full path to destination file
+                <span class="cov8" title="1">s.ToDelete = append(s.ToDelete, fPath)</span>
+        }
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+// Compare src and dest directory
+// return true if entries count are equal or src - dest &lt; x% different
+func (s *SyncCommand) Compare(src Container, dest Container) (
+        status bool,
+        err error,
+) <span class="cov8" title="1">{
+        if s == nil </span><span class="cov0" title="0">{
+                return status, fmt.Errorf("nil receiver not allowed")
+        }</span>
+
+        <span class="cov8" title="1">if src == nil || dest == nil </span><span class="cov0" title="0">{
+                return status, fmt.Errorf("nil container not allowed")
+        }</span>
+
+        <span class="cov8" title="1">diff := src.Objects() - dest.Objects()
+        if diff &lt; 0 </span><span class="cov8" title="1">{
+                diff = -diff
+        }</span>
+        <span class="cov8" title="1">maxObj := max(src.Objects(), dest.Objects())
+        percent := int(float64(diff) / float64(maxObj) * 100)
+
+        // check that diff is less than max possible
+        return percent &lt; s.SrcDiffPercent, err</span>
+}
+
+// Sync prepared directories
+func (s *SyncCommand) Sync() (err error) <span class="cov0" title="0">{
+        if s == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("nil receiver not allowed")
+        }</span>
+
+        // check prepared data
+
+        // run parallel
+        <span class="cov0" title="0">return err</span>
+}
+
+func (s *SyncCommand) makeReport() {<span class="cov0" title="0">
+
+}</span>
+
+func (s *SyncCommand) mergePath(str ...string) (res string, err error) <span class="cov8" title="1">{
+        var buf strings.Builder
+
+        for _, sp := range str </span><span class="cov8" title="1">{
+                if _, err = buf.WriteString(sp); err != nil </span><span class="cov0" title="0">{
+                        return res, err
+                }</span>
+        }
+        <span class="cov8" title="1">return buf.String(), err</span>
+}
+
+// Container return own size as elements count
+type Container interface {
+        Objects() int
+}
+
+// Directory represent files collection where key is a full path
+// and value is modification time
+type Directory struct {
+        Files map[string]FileMeta
+        Root  string
+}
+
+func (dir *Directory) Objects() int <span class="cov8" title="1">{
+        return len(dir.Files)
+}</span>
+
+// FileMeta all required meta data at the moment
+type FileMeta struct {
+        ModTime time.Time
+}
+
+// SyncMeta collect meta information about synchronized
+// objects
+type SyncMeta struct {
+        Dirs []Directory
+}
+
+const DefaultDirAllocSize = 16
+
+// MakeSyncMeta factory function return new SyncMeta object
+func MakeSyncMeta() SyncMeta <span class="cov0" title="0">{
+        dirs := make([]Directory, 0, DefaultDirAllocSize)
+        return SyncMeta{
+                Dirs: dirs,
+        }
+}</span>
+
+// MakeMeta iterate through internal root directory objects
+// and collect meta information about files
+func (sm *SyncMeta) MakeMeta(root string) (err error) <span class="cov0" title="0">{
+        var files []os.DirEntry
+        var buf strings.Builder
+        var info os.FileInfo
+
+        // handle nil pointer
+        if sm == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("nil SyncMeta pointer")
+        }</span>
+
+        <span class="cov0" title="0">if files, err = os.ReadDir(root); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">currDir := Directory{}
+        for _, file := range files </span><span class="cov0" title="0">{
+                buf.WriteString(root)
+                buf.WriteString("/")
+                buf.WriteString(file.Name())
+
+                fPath := buf.String()
+                if ok := file.IsDir(); !ok </span><span class="cov0" title="0">{
+
+                        // is a file, let`s add file meta into Directory
+                        if info, err = file.Info(); err != nil </span><span class="cov0" title="0">{
+                                return err
+                        }</span>
+
+                        // save by filename (not by full path)
+                        <span class="cov0" title="0">currDir.Files[info.Name()] = FileMeta{
+                                ModTime: info.ModTime(),
+                        }
+                        continue</span>
+                }
+
+                // is another directory - dive
+                <span class="cov0" title="0">if err = sm.MakeMeta(fPath); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+        }
+
+        // add visited dir to collection
+        <span class="cov0" title="0">sm.Dirs = append(sm.Dirs, currDir)
+        return err</span>
+}
+
+// Objects return count of nested directories
+func (sm *SyncMeta) Objects() int <span class="cov0" title="0">{
+        return len(sm.Dirs)
+}</span>
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">package main
+
+func main() {<span class="cov0" title="0">
+        //var d = -1
+        //fmt.Printf("%d\n", -d)
+}</span>
+</pre>
+		
+		</div>
+	</body>
+	<script>
+	(function() {
+		var files = document.getElementById('files');
+		var visible;
+		files.addEventListener('change', onChange, false);
+		function select(part) {
+			if (visible)
+				visible.style.display = 'none';
+			visible = document.getElementById(part);
+			if (!visible)
+				return;
+			files.value = part;
+			visible.style.display = 'block';
+			location.hash = part;
+		}
+		function onChange() {
+			select(files.value);
+			window.scrollTo(0, 0);
+		}
+		if (location.hash != "") {
+			select(location.hash.substr(1));
+		}
+		if (!visible) {
+			select("file0");
+		}
+	})();
+	</script>
+</html>
