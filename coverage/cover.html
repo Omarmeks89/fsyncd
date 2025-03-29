@@ -55,9 +55,13 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (47.5%)</option>
+				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (49.0%)</option>
 				
-				<option value="file1">github.com/Omarmeks89/fsyncd/main.go (0.0%)</option>
+				<option value="file1">github.com/Omarmeks89/fsyncd/log.go (0.0%)</option>
+				
+				<option value="file2">github.com/Omarmeks89/fsyncd/main.go (0.0%)</option>
+				
+				<option value="file3">github.com/Omarmeks89/fsyncd/serverd.go (0.0%)</option>
 				
 				</select>
 			</div>
@@ -83,6 +87,8 @@ import (
         "os"
         "strings"
         "time"
+
+        "github.com/sirupsen/logrus"
 )
 
 // DefaultBufferSize for intermediate buffer
@@ -115,17 +121,17 @@ type SyncCommand struct {
         // for synchronized objects
         SyncPairs []SyncPair
 
-        // buffer to store execution report
-        Report strings.Builder
+        log *logrus.Logger
 }
 
-func MakeSyncCommand(SrcDiffPercent int) SyncCommand <span class="cov8" title="1">{
+func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand <span class="cov8" title="1">{
         toDel := make([]string, 0, DefaultSyncObjectsSize)
         pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
         return SyncCommand{
                 ToDelete:       toDel,
                 SyncPairs:      pairs,
                 SrcDiffPercent: SrcDiffPercent,
+                log:            log,
         }
 }</span>
 
@@ -143,8 +149,7 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span clas
         var ok bool
 
         // check size diff (less than x%) between src and dest directories
-        // (compare nested directories count)
-        if ok, err = s.Compare(&amp;src, &amp;dst); !ok </span><span class="cov8" title="1">{
+        if ok, err = s.CompareRoot(&amp;src, &amp;dst); !ok </span><span class="cov8" title="1">{
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
@@ -155,16 +160,10 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span clas
         }
 
         // compare fetched metadata - check size diff
-        <span class="cov8" title="1">for i := 0; i &lt; src.Objects(); i++ </span><span class="cov8" title="1">{
-                if ok, err = s.Compare(&amp;src.Dirs[i], &amp;dst.Dirs[i]); !ok </span><span class="cov0" title="0">{
-                        // means directories are different (diff is greater that x%)
-                        // create notification for user
-                        s.makeReport()
-                        continue</span>
-                }
+        <span class="cov8" title="1">for i := 0; i &lt; len(src.Dirs); i++ </span><span class="cov8" title="1">{
 
                 // add objects for delete (not in master) -&gt; Delete()
-                <span class="cov8" title="1">if err = s.configureSyncActions(src.Dirs[i], dst.Dirs[i]); err != nil </span><span class="cov0" title="0">{
+                if err = s.configureSyncActions(src.Dirs[i], dst.Dirs[i]); err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
         }
@@ -231,9 +230,9 @@ func (s *SyncCommand) prepareRoot(root string) string <span class="cov8" title="
         <span class="cov8" title="1">return root</span>
 }
 
-// Compare src and dest directory
+// CompareRoot src and dest directory
 // return true if entries count are equal or src - dest &lt; x% different
-func (s *SyncCommand) Compare(src Container, dest Container) (
+func (s *SyncCommand) CompareRoot(src Sized, dest Sized) (
         status bool,
         err error,
 ) <span class="cov8" title="1">{
@@ -245,20 +244,17 @@ func (s *SyncCommand) Compare(src Container, dest Container) (
                 return status, fmt.Errorf("nil container not allowed")
         }</span>
 
-        <span class="cov8" title="1">diff := src.Objects() - dest.Objects()
+        <span class="cov8" title="1">srcSize, dstSize := src.FilesCount(), dest.FilesCount()
+        diff := srcSize - dstSize
         if diff &lt; 0 </span><span class="cov8" title="1">{
                 diff = -diff
         }</span>
-        <span class="cov8" title="1">maxObj := max(src.Objects(), dest.Objects())
+        <span class="cov8" title="1">maxObj := max(srcSize, dstSize)
         percent := int(float64(diff) / float64(maxObj) * 100)
 
         // check that diff is less than max possible
         return percent &lt; s.SrcDiffPercent, err</span>
 }
-
-func (s *SyncCommand) makeReport() {<span class="cov0" title="0">
-
-}</span>
 
 func (s *SyncCommand) mergePath(str ...string) (res string, err error) <span class="cov8" title="1">{
         var buf strings.Builder
@@ -271,9 +267,9 @@ func (s *SyncCommand) mergePath(str ...string) (res string, err error) <span cla
         <span class="cov8" title="1">return buf.String(), err</span>
 }
 
-// Container return own size as elements count
-type Container interface {
-        Objects() int
+// Sized return own size as elements count
+type Sized interface {
+        FilesCount() int
 }
 
 // Directory represent files collection where key is a full path
@@ -286,7 +282,7 @@ type Directory struct {
         Root string
 }
 
-func (dir *Directory) Objects() int <span class="cov8" title="1">{
+func (dir *Directory) FilesCount() int <span class="cov8" title="1">{
         return len(dir.Files)
 }</span>
 
@@ -361,15 +357,25 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) <span class="cov0" title="
         return err</span>
 }
 
-// Objects return count of nested directories
-func (sm *SyncMeta) Objects() int <span class="cov8" title="1">{
-        return len(sm.Dirs)
-}</span>
+// fclose internal function for deferred error handling from closed files.
+// Can close readers and writers
+func fclose(log *logrus.Logger, file io.ReadWriteCloser) <span class="cov0" title="0">{
+        if err := file.Close(); err != nil </span><span class="cov0" title="0">{
+                log.Error(err)
+        }</span>
+}
+
+// FilesCount return count of files
+func (sm *SyncMeta) FilesCount() (size int) <span class="cov8" title="1">{
+        for i := 0; i &lt; len(sm.Dirs); i++ </span><span class="cov8" title="1">{
+                size += sm.Dirs[i].FilesCount()
+        }</span>
+        <span class="cov8" title="1">return size</span>
+}
 
 // Sync files pair
-func Sync(ctx context.Context, pair SyncPair) (err error) <span class="cov0" title="0">{
-        var srcFile io.ReadCloser
-        var dstFile io.WriteCloser
+func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) <span class="cov0" title="0">{
+        var srcFile, dstFile io.ReadWriteCloser
 
         // open src
         srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, DefaultRdPerm)
@@ -377,7 +383,7 @@ func Sync(ctx context.Context, pair SyncPair) (err error) <span class="cov0" tit
                 return err
         }</span>
 
-        <span class="cov0" title="0">defer srcFile.Close()
+        <span class="cov0" title="0">defer fclose(log, srcFile)
 
         // open dst (create file if not exists)
         dstFile, err = os.OpenFile(pair.Src, os.O_CREATE|os.O_RDWR, DefaultWrPerm)
@@ -385,7 +391,7 @@ func Sync(ctx context.Context, pair SyncPair) (err error) <span class="cov0" tit
                 return err
         }</span>
 
-        <span class="cov0" title="0">defer dstFile.Close()
+        <span class="cov0" title="0">defer fclose(log, dstFile)
 
         // handle ctx or signal (graceful shutdown)
         // later we can`t stop operation - it may break file...
@@ -406,12 +412,93 @@ func Sync(ctx context.Context, pair SyncPair) (err error) <span class="cov0" tit
 }
 </pre>
 		
-		<pre class="file" id="file1" style="display: none">package main
+		<pre class="file" id="file1" style="display: none">// contain logger presets for daemon
+
+package main
+
+import (
+        "github.com/sirupsen/logrus"
+        sHook "github.com/sirupsen/logrus/hooks/syslog"
+        "log/syslog"
+)
+
+// SetupLogger return new logger for daemon. Read with journalctl -t fsyncd
+func SetupLogger() (log *logrus.Logger, err error) <span class="cov0" title="0">{
+        var hook *sHook.SyslogHook
+
+        log = logrus.New()
+        hook, err = sHook.NewSyslogHook("", "", syslog.LOG_DAEMON, "fsyncd")
+        if err != nil </span><span class="cov0" title="0">{
+                log.Hooks.Add(hook)
+                return log, err
+        }</span>
+
+        <span class="cov0" title="0">log.Error("syslog hook configuration failed")
+        return nil, err</span>
+}
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">package main
 
 func main() {<span class="cov0" title="0">
         //var d = -1
         //fmt.Printf("%d\n", -d)
 }</span>
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">// contain types and functions to work with unix socket
+
+package main
+
+import (
+        "context"
+        "github.com/sirupsen/logrus"
+        "net"
+        "time"
+)
+
+const UnixSocketNet = "unix"
+
+const DefaultUnixSockTimeout = 10 * time.Second
+
+func sockclose(log *logrus.Logger, sock net.Listener) <span class="cov0" title="0">{
+        err := sock.Close()
+        if err != nil </span><span class="cov0" title="0">{
+                log.Error(err)
+        }</span>
+}
+
+// HandleCommands from fsyncdctl
+func HandleCommands(
+        ctx context.Context,
+        log *logrus.Logger,
+        sockPath string,
+) error <span class="cov0" title="0">{
+        // create server unix socket
+        servCfg := net.ListenConfig{
+                KeepAlive: DefaultUnixSockTimeout, // set timeout for ctl connection
+        }
+
+        sock, err := servCfg.Listen(ctx, UnixSocketNet, sockPath)
+        if err != nil </span><span class="cov0" title="0">{
+                log.Error(err)
+        }</span>
+
+        <span class="cov0" title="0">defer sockclose(log, sock)
+
+        // handle commands
+        for </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        return ctx.Err()</span>
+                default:<span class="cov0" title="0">
+                        // more readable
+                        break</span>
+                }
+
+                // handle clients
+        }
+}
 </pre>
 		
 		</div>

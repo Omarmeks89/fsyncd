@@ -72,8 +72,7 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 	var ok bool
 
 	// check size diff (less than x%) between src and dest directories
-	// (compare nested directories count)
-	if ok, err = s.Compare(&src, &dst); !ok {
+	if ok, err = s.CompareRoot(&src, &dst); !ok {
 		if err != nil {
 			return err
 		}
@@ -84,20 +83,7 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 	}
 
 	// compare fetched metadata - check size diff
-	for i := 0; i < src.Objects(); i++ {
-		if ok, err = s.Compare(&src.Dirs[i], &dst.Dirs[i]); !ok {
-			// means directories are different (diff is greater that x%)
-			// create notification for user
-			s.log.Warn(
-				fmt.Sprintf(
-					"can`t sync '%s' > '%s' (diff > %d%%)",
-					src.Dirs[i].Root,
-					dst.Dirs[i].Root,
-					s.SrcDiffPercent,
-				),
-			)
-			continue
-		}
+	for i := 0; i < len(src.Dirs); i++ {
 
 		// add objects for delete (not in master) -> Delete()
 		if err = s.configureSyncActions(src.Dirs[i], dst.Dirs[i]); err != nil {
@@ -167,9 +153,9 @@ func (s *SyncCommand) prepareRoot(root string) string {
 	return root
 }
 
-// Compare src and dest directory
+// CompareRoot src and dest directory
 // return true if entries count are equal or src - dest < x% different
-func (s *SyncCommand) Compare(src Container, dest Container) (
+func (s *SyncCommand) CompareRoot(src Sized, dest Sized) (
 	status bool,
 	err error,
 ) {
@@ -181,11 +167,12 @@ func (s *SyncCommand) Compare(src Container, dest Container) (
 		return status, fmt.Errorf("nil container not allowed")
 	}
 
-	diff := src.Objects() - dest.Objects()
+	srcSize, dstSize := src.FilesCount(), dest.FilesCount()
+	diff := srcSize - dstSize
 	if diff < 0 {
 		diff = -diff
 	}
-	maxObj := max(src.Objects(), dest.Objects())
+	maxObj := max(srcSize, dstSize)
 	percent := int(float64(diff) / float64(maxObj) * 100)
 
 	// check that diff is less than max possible
@@ -203,9 +190,9 @@ func (s *SyncCommand) mergePath(str ...string) (res string, err error) {
 	return buf.String(), err
 }
 
-// Container return own size as elements count
-type Container interface {
-	Objects() int
+// Sized return own size as elements count
+type Sized interface {
+	FilesCount() int
 }
 
 // Directory represent files collection where key is a full path
@@ -218,7 +205,7 @@ type Directory struct {
 	Root string
 }
 
-func (dir *Directory) Objects() int {
+func (dir *Directory) FilesCount() int {
 	return len(dir.Files)
 }
 
@@ -301,9 +288,12 @@ func fclose(log *logrus.Logger, file io.ReadWriteCloser) {
 	}
 }
 
-// Objects return count of nested directories
-func (sm *SyncMeta) Objects() int {
-	return len(sm.Dirs)
+// FilesCount return count of files
+func (sm *SyncMeta) FilesCount() (size int) {
+	for i := 0; i < len(sm.Dirs); i++ {
+		size += sm.Dirs[i].FilesCount()
+	}
+	return size
 }
 
 // Sync files pair

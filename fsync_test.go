@@ -80,8 +80,8 @@ func TestSyncCommand_Compare(t *testing.T) {
 	tests := []struct {
 		name        string
 		diffPercent int
-		src         Container
-		dest        Container
+		src         Sized
+		dest        Sized
 		wantStatus  bool
 		wantErr     error
 	}{
@@ -136,7 +136,7 @@ func TestSyncCommand_Compare(t *testing.T) {
 		t.Run(
 			tt.name, func(t *testing.T) {
 				cmd := MakeSyncCommand(log, tt.diffPercent)
-				status, _ := cmd.Compare(tt.src, tt.dest)
+				status, _ := cmd.CompareRoot(tt.src, tt.dest)
 
 				require.Equal(t, tt.wantStatus, status)
 			},
