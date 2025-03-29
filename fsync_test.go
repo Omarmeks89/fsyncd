@@ -93,7 +93,7 @@ func TestSyncCommand_Compare(t *testing.T) {
 						ModTime: tm,
 					},
 				},
-				Root: "/home/user",
+				NestedPath: "/home/user",
 			},
 			dest: &Directory{
 				Files: map[string]FileMeta{
@@ -101,7 +101,7 @@ func TestSyncCommand_Compare(t *testing.T) {
 						ModTime: tm,
 					},
 				},
-				Root: "/home/user",
+				NestedPath: "/home/user",
 			},
 			diffPercent: 30,
 			wantStatus:  true,
@@ -115,7 +115,7 @@ func TestSyncCommand_Compare(t *testing.T) {
 						ModTime: tm,
 					},
 				},
-				Root: "/home/user",
+				NestedPath: "/home/user",
 			},
 			dest: &Directory{
 				Files: map[string]FileMeta{
@@ -126,7 +126,7 @@ func TestSyncCommand_Compare(t *testing.T) {
 						ModTime: tm,
 					},
 				},
-				Root: "/home/user",
+				NestedPath: "/home/user",
 			},
 			diffPercent: 30,
 			wantStatus:  false,
@@ -188,7 +188,7 @@ func TestSyncCommand_configureSyncActions1(t *testing.T) {
 						ModTime: tm,
 					},
 				},
-				Root: "/home/user",
+				NestedPath: "/home/user",
 			},
 			dst: Directory{
 				Files: map[string]FileMeta{
@@ -196,7 +196,7 @@ func TestSyncCommand_configureSyncActions1(t *testing.T) {
 						ModTime: tm.Add(10 * time.Second),
 					},
 				},
-				Root: "/cloud/data",
+				NestedPath: "/cloud/data",
 			},
 			res: SyncPair{
 				Src: "/cloud/data/test.txt",
@@ -231,8 +231,8 @@ func TestSyncCommand_Prepare(t *testing.T) {
 		{
 			name: "test create test2.txt in /cloud/sync-dir directory",
 			src: SyncMeta{
-				Dirs: []Directory{
-					{
+				Dirs: map[string]Directory{
+					"sync-dir": {
 						Files: map[string]FileMeta{
 							"test1.txt": {
 								ModTime: tm,
@@ -244,13 +244,14 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						Root: "/home/master/sync-dir",
+						NestedPath: "/home/master/sync-dir",
+						Name:       "sync-dir",
 					},
 				},
 			},
 			dst: SyncMeta{
-				Dirs: []Directory{
-					{
+				Dirs: map[string]Directory{
+					"sync-dir": {
 						Files: map[string]FileMeta{
 							"test1.txt": {
 								ModTime: tm,
@@ -259,7 +260,8 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						Root: "/cloud/sync-dir",
+						NestedPath: "/cloud/sync-dir",
+						Name:       "sync-dir",
 					},
 				},
 			},
@@ -282,8 +284,8 @@ func TestSyncCommand_Prepare(t *testing.T) {
 		{
 			name: "test set test1.txt from /cloud/sync-dir directory as master (latest change)",
 			src: SyncMeta{
-				Dirs: []Directory{
-					{
+				Dirs: map[string]Directory{
+					"sync-dir": {
 						Files: map[string]FileMeta{
 							"test1.txt": {
 								ModTime: tm,
@@ -292,13 +294,13 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						Root: "/home/master/sync-dir",
+						NestedPath: "/home/master/sync-dir",
 					},
 				},
 			},
 			dst: SyncMeta{
-				Dirs: []Directory{
-					{
+				Dirs: map[string]Directory{
+					"sync-dir": {
 						Files: map[string]FileMeta{
 							"test1.txt": {
 								ModTime: tm.Add(10 * time.Minute),
@@ -307,7 +309,7 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						Root: "/cloud/sync-dir",
+						NestedPath: "/cloud/sync-dir",
 					},
 				},
 			},
@@ -361,8 +363,8 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 		{
 			name: "test return signal error (TooLargeDifferenceErr)",
 			src: SyncMeta{
-				Dirs: []Directory{
-					{
+				Dirs: map[string]Directory{
+					"sync-dir": {
 						Files: map[string]FileMeta{
 							"test1.txt": {
 								ModTime: tm,
@@ -371,9 +373,9 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						Root: "/home/master/sync-dir",
+						NestedPath: "/home/master/sync-dir",
 					},
-					{
+					"sync-dir2": {
 						Files: map[string]FileMeta{
 							"test3.txt": {
 								ModTime: tm,
@@ -382,19 +384,19 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						Root: "/home/master/sync-dir2",
+						NestedPath: "/home/master/sync-dir2",
 					},
 				},
 			},
 			dst: SyncMeta{
-				Dirs: []Directory{
-					{
+				Dirs: map[string]Directory{
+					"sync-dir": {
 						Files: map[string]FileMeta{
 							"test1.txt": {
 								ModTime: tm,
 							},
 						},
-						Root: "/cloud/sync-dir",
+						NestedPath: "/cloud/sync-dir",
 					},
 				},
 			},
@@ -409,6 +411,51 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 				err := cmd.Prepare(tt.src, tt.dst)
 
 				require.EqualError(t, err, tt.err.Error())
+			},
+		)
+	}
+}
+
+func TestSyncCommand_PrepareRootPath(t *testing.T) {
+
+	tests := []struct {
+		name       string
+		rootPath   string
+		nestedPath string
+		res        [][]string
+	}{
+		{
+			name:       "base path configured",
+			rootPath:   "/cloud/root/path",
+			nestedPath: "root/test/my-proj/config.json",
+			res: [][]string{
+				{
+					"/cloud/root/path",
+					"test",
+					"my-proj",
+				},
+			},
+		},
+		{
+			name:       "base path configured with .path",
+			rootPath:   "/cloud/root/path",
+			nestedPath: "root/test/.my-proj/config.json",
+			res: [][]string{
+				{
+					"/cloud/root/path",
+					"test",
+					".my-proj",
+				},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				sm := MakeSyncCommand(logrus.New(), 30)
+				_ = sm.PrepareRootPath(tt.rootPath, tt.nestedPath)
+
+				require.Equal(t, tt.res[0], sm.ToCreatePath[0])
 			},
 		)
 	}

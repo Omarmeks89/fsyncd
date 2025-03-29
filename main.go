@@ -1,6 +1,12 @@
 package main
 
+import (
+	"log"
+)
+
 func main() {
-	//var d = -1
-	//fmt.Printf("%d\n", -d)
+	sm := MakeSyncMeta()
+	if err := sm.MakeMeta("a"); err != nil {
+		log.Fatal(err)
+	}
 }
