@@ -4,9 +4,11 @@
 package main
 
 import (
+	"container/list"
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"strings"
@@ -40,15 +42,51 @@ type SyncPair struct {
 	Dst string
 }
 
+type DirectoryNode struct {
+	Parent *DirectoryNode
+
+	// part of path to directory
+	PathPart string
+	Nested   map[string]*DirectoryNode
+
+	Visited bool
+}
+
+func (dn *DirectoryNode) IsRoot() (ok bool, err error) {
+	if dn == nil {
+		return ok, fmt.Errorf("nil DirectoryNode receiver not allowed")
+	}
+
+	if dn.Parent == nil {
+		return true, err
+	}
+
+	return ok, err
+}
+
+func (dn *DirectoryNode) IsLeaf() (ok bool, err error) {
+	if dn == nil {
+		return ok, fmt.Errorf("nil DirectoryNode receiver not allowed")
+	}
+
+	if dn.Nested == nil || len(dn.Nested) == 0 {
+		return true, err
+	}
+
+	return ok, err
+}
+
+// SyncCommand create all data for successful sync execution
 type SyncCommand struct {
 	// max possible difference between directories
 	SrcDiffPercent int
 
 	// ToDelete contain full paths for files have to be deleted
-	ToDelete []string
+	// collect in map to run parallel
+	ToDelete map[string][]string
 
 	// Nodes collection to create path inside dst root directory
-	ToCreatePath [][]string
+	DirGraph *DirectoryNode
 
 	// SyncPairs (src, dst) contain full source and destination paths
 	// for synchronized objects
@@ -56,7 +94,7 @@ type SyncCommand struct {
 
 	log *logrus.Logger
 
-	// re expression for detect file suffix like (.[a-z]+) group
+	// re expression for detect file suffix like ([a-z...]\\.[a-z]+) group
 	suffDetector *regexp.Regexp
 
 	// re expression for .. and ... head sequences
@@ -64,11 +102,14 @@ type SyncCommand struct {
 }
 
 func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand {
-	toDel := make([]string, 0, DefaultSyncObjectsSize)
+	toDel := make(map[string][]string, DefaultSyncObjectsSize)
 	pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
-	paths := make([][]string, 0, DefaultSyncObjectsSize)
 
-	// set trimmer
+	// alloc memory for paths graph
+	paths := &DirectoryNode{
+		Nested: make(map[string]*DirectoryNode, DefaultSyncObjectsSize),
+	}
+
 	sd := regexp.MustCompile("([a-zA-Zа-яА-Я_0-9\\-]+\\.[a-z]+)")
 	pd := regexp.MustCompile("^\\.{2,}.*")
 
@@ -76,7 +117,7 @@ func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand {
 		ToDelete:       toDel,
 		SyncPairs:      pairs,
 		SrcDiffPercent: SrcDiffPercent,
-		ToCreatePath:   paths,
+		DirGraph:       paths,
 		log:            log,
 		suffDetector:   sd,
 		prefDetector:   pd,
@@ -141,6 +182,12 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 		directory.NestedPath = srcFullPath
 		dstDirectory.NestedPath = dstFullPath
 
+		// set name (if not set - directory not exists) to
+		// group files for delete (if exists)
+		if dstDirectory.Name == "" {
+			dstDirectory.Name = directory.Name
+		}
+
 		// create task for sync files
 		if err = s.configureSyncActions(directory, dstDirectory); err != nil {
 			return err
@@ -156,12 +203,29 @@ func (s *SyncCommand) PrepareRootPath(
 	rootPath string,
 	nestedPath string,
 ) (err error) {
+	var currNode, nested *DirectoryNode
+	var ok bool
+
+	// init root node and set path (if not exists)
+	currNode = s.DirGraph
+	if currNode == nil {
+		return fmt.Errorf("directory graph not allocated")
+	}
+
+	if currNode.PathPart == "" {
+		currNode.PathPart = rootPath
+	}
+
 	// root, a, b, c, ..., etc. directories from root/a/b/c/etc. path
 	// exclude path with sequences like '..' or longer
-	pathChops := make([]string, 0, DefaultSyncObjectsSize)
-
 	chops := strings.Split(nestedPath, "/")
-	for _, chop := range chops {
+	if len(chops) < 2 {
+		// return error - no valid path to create (root exists)
+		return fmt.Errorf("invalid path chops count or no paths al all")
+	}
+
+	// exclude root element
+	for _, chop := range chops[1:] {
 
 		if s.suffDetector.MatchString(chop) {
 			continue
@@ -173,12 +237,29 @@ func (s *SyncCommand) PrepareRootPath(
 			return PathError
 		}
 
-		// if we got 'root' token - replace on real root path
-		chop = s.replaceRootMask(chop, rootPath)
-		pathChops = append(pathChops, chop)
+		newDirNode := &DirectoryNode{
+			Parent:   currNode,
+			PathPart: chop,
+			Nested: make(
+				map[string]*DirectoryNode,
+				DefaultSyncObjectsSize,
+			),
+		}
+
+		if nested, ok = currNode.Nested[chop]; !ok {
+			// add to Nested in current Node and update pointer
+			currNode.Nested[chop] = newDirNode
+			currNode = newDirNode
+			continue
+		}
+
+		// nested node exists - change Parent and add new node to nested
+		// update pointer on nested
+		newDirNode.Parent = nested
+		nested.Nested[chop] = newDirNode
+		currNode = nested
 	}
 
-	s.ToCreatePath = append(s.ToCreatePath, pathChops)
 	return err
 }
 
@@ -196,7 +277,7 @@ func (s *SyncCommand) configureSyncActions(
 	src Directory,
 	dst Directory,
 ) (err error) {
-	var srcPath, dstPath, fPath string
+	var srcPath, dstPath, fPath, delKey string
 
 	for k, v := range src.Files {
 		srcPath, err = s.mergePath(s.prepareRoot(src.NestedPath), "/", k)
@@ -236,8 +317,13 @@ func (s *SyncCommand) configureSyncActions(
 			return err
 		}
 
-		// add full path to destination file
-		s.ToDelete = append(s.ToDelete, fPath)
+		// make del key
+		if delKey, err = s.mergePath(dst.Name, k); err != nil {
+			return err
+		}
+
+		// add full path to destination
+		s.ToDelete[delKey] = append(s.ToDelete[delKey], fPath)
 	}
 
 	return nil
@@ -389,8 +475,6 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
 
 		fPath := buf.String()
 
-		fmt.Printf("%s, %s, %s\n", fPath, root, file.Name())
-
 		if ok := file.IsDir(); !ok {
 
 			// is a file, let`s add file meta into Directory
@@ -402,6 +486,8 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
 			currDir.Files[info.Name()] = FileMeta{
 				ModTime: info.ModTime(),
 			}
+
+			buf.Reset()
 			continue
 		}
 
@@ -450,7 +536,7 @@ func fclose(log *logrus.Logger, file io.ReadWriteCloser) {
 func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) {
 	var srcFile, dstFile io.ReadWriteCloser
 
-	// open src
+	// open src (take permissions from sync pair)
 	srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, DefaultRdPerm)
 	if err != nil {
 		return err
@@ -478,5 +564,70 @@ func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) {
 	// alloc buffer if files opened
 	buf := make([]byte, DefaultBufferSize)
 	_, err = io.CopyBuffer(dstFile, srcFile, buf)
+	return err
+}
+
+func DeleteFiles(files []string) (err error) {
+	for _, file := range files {
+
+		if err = os.Remove(file); err != nil {
+			return err
+		}
+	}
+	return err
+}
+
+func CreateDirectoriesBFS(
+	root *DirectoryNode,
+	perm fs.FileMode,
+) (err error) {
+	var dq *list.List
+	var buf strings.Builder
+	var ok bool
+
+	if root == nil {
+		return fmt.Errorf("nil pointer on dir root")
+	}
+
+	dq = list.New()
+
+	dq.PushBack(root)
+	for dq.Len() != 0 {
+
+		// we dont care about nil ptr here
+		elem := dq.Front()
+		node := elem.Value.(*DirectoryNode)
+		dq.Remove(elem)
+
+		for _, directoryNode := range node.Nested {
+
+			buf.WriteString(node.PathPart)
+			buf.WriteString("/")
+			buf.WriteString(directoryNode.PathPart)
+
+			// create new directory
+			if err = os.Mkdir(buf.String(), perm); err != nil {
+				return err
+			}
+
+			// set new path
+			if ok, err = directoryNode.IsLeaf(); err != nil {
+				return err
+			}
+
+			if !ok {
+				// nested dir is not a leaf we should handle
+				// it -> update path and add into deque
+				directoryNode.PathPart = buf.String()
+				dq.PushBack(directoryNode)
+			}
+
+			// skip leaf dir
+			buf.Reset()
+		}
+
+		// we handle all nested nodes - mark current node as visited
+		node.Visited = true
+	}
 	return err
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"sort"
@@ -13,11 +14,11 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 	log := logrus.New()
 
 	tests := []struct {
-		name        string
-		diffPercent int
-		srcD        Directory
-		dstD        Directory
-		wait        []string
+		name         string
+		diffPercent  int
+		srcD         Directory
+		dstD         Directory
+		waitToDelete map[string][]string
 	}{
 		{
 			name:        "test mismatched file will be add to delete",
@@ -28,6 +29,7 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 						ModTime: tm,
 					},
 				},
+				Name: "dir_a",
 			},
 			dstD: Directory{
 				Files: map[string]FileMeta{
@@ -35,8 +37,13 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 						ModTime: tm,
 					},
 				},
+				Name: "dir_a",
 			},
-			wait: []string{"./any_file.txt"},
+			waitToDelete: map[string][]string{
+				"dir_aany_file.txt": {
+					"./any_file.txt",
+				},
+			},
 		},
 		{
 			name:        "test mismatched file will be choose from many",
@@ -47,6 +54,7 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 						ModTime: tm,
 					},
 				},
+				Name: "dir_b",
 			},
 			dstD: Directory{
 				Files: map[string]FileMeta{
@@ -57,8 +65,13 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 						ModTime: tm,
 					},
 				},
+				Name: "dir_b",
 			},
-			wait: []string{"./anyfile.txt"},
+			waitToDelete: map[string][]string{
+				"dir_banyfile.txt": {
+					"./anyfile.txt",
+				},
+			},
 		},
 	}
 
@@ -67,7 +80,10 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 			tt.name, func(t *testing.T) {
 				cmd := MakeSyncCommand(log, tt.diffPercent)
 				_ = cmd.configureSyncActions(tt.srcD, tt.dstD)
-				require.Equal(t, tt.wait, cmd.ToDelete)
+
+				fmt.Printf("%+v, %+v\n", cmd.ToDelete, tt.waitToDelete)
+
+				require.Equal(t, tt.waitToDelete, cmd.ToDelete)
 			},
 		)
 	}
@@ -423,35 +439,62 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 }
 
 func TestSyncCommand_PrepareRootPath(t *testing.T) {
+	var dn *DirectoryNode
+	var ok bool
 
 	tests := []struct {
-		name       string
-		rootPath   string
-		nestedPath string
-		res        [][]string
+		name        string
+		rootPath    string
+		nestedPath  string
+		createdKeys []string
+		res         *DirectoryNode
 	}{
 		{
-			name:       "base path configured",
-			rootPath:   "/cloud/root/path",
-			nestedPath: "root/test/my-proj/config.json",
-			res: [][]string{
-				{
-					"/cloud/root/path",
-					"test",
-					"my-proj",
+			name:        "base path configured",
+			rootPath:    "/cloud/root/path",
+			nestedPath:  "root/test/my-proj/config.json",
+			createdKeys: []string{"test", "my-proj"},
+			res: &DirectoryNode{
+				Nested: map[string]*DirectoryNode{
+					"test": &DirectoryNode{
+						Nested: map[string]*DirectoryNode{
+							"my-proj": &DirectoryNode{
+								PathPart: "my-proj",
+							},
+						},
+						PathPart: "test",
+					},
 				},
+				PathPart: "/cloud/root/path",
 			},
 		},
 		{
-			name:       "base path configured with hidden .path",
-			rootPath:   "/cloud/root/path",
-			nestedPath: "root/test/.my-proj/config.json",
-			res: [][]string{
-				{
-					"/cloud/root/path",
-					"test",
-					".my-proj",
+			name:        "more complex path configured",
+			rootPath:    "/cloud/root/path",
+			nestedPath:  "root/test/my-proj/data/upd/.ref.txt",
+			createdKeys: []string{"test", "my-proj", "data", "upd"},
+			res: &DirectoryNode{
+				Nested: map[string]*DirectoryNode{
+					"test": &DirectoryNode{
+						Nested: map[string]*DirectoryNode{
+							"my-proj": &DirectoryNode{
+								PathPart: "my-proj",
+								Nested: map[string]*DirectoryNode{
+									"data": &DirectoryNode{
+										PathPart: "data",
+										Nested: map[string]*DirectoryNode{
+											"upd": &DirectoryNode{
+												PathPart: "upd",
+											},
+										},
+									},
+								},
+							},
+						},
+						PathPart: "test",
+					},
 				},
+				PathPart: "/cloud/root/path",
 			},
 		},
 	}
@@ -461,13 +504,24 @@ func TestSyncCommand_PrepareRootPath(t *testing.T) {
 				sm := MakeSyncCommand(logrus.New(), 30)
 				_ = sm.PrepareRootPath(tt.rootPath, tt.nestedPath)
 
-				require.Equal(t, tt.res[0], sm.ToCreatePath[0])
+				dn = sm.DirGraph
+
+				for i, key := range tt.createdKeys {
+					dn, ok = dn.Nested[key]
+					require.Equal(t, true, ok)
+
+					if i == len(tt.createdKeys)-1 {
+						// check last dn is Leaf
+						ok, _ = dn.IsLeaf()
+						require.Equal(t, true, ok)
+					}
+				}
 			},
 		)
 	}
 }
 
-func TestSyncCommand_PrepareRootPath1(t *testing.T) {
+func TestSyncCommand_PrepareRootPathReturnPathError(t *testing.T) {
 	tests := []struct {
 		name       string
 		rootPath   string
