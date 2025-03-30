@@ -109,6 +109,9 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 	}
 
 	for dirName, directory := range src.Dirs {
+
+		// directory not found in dst directory - we have
+		// to make task to create this directory in dst
 		if dstDirectory, ok = dst.Dirs[dirName]; !ok {
 
 			if dirName == DefaultRootDirMask {
@@ -116,7 +119,6 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 				return fmt.Errorf("no root destination directory")
 			}
 
-			// create sync pair for files future dirs
 			if err = s.PrepareRootPath(
 				dst.MountPoint,
 				directory.NestedPath,
@@ -124,6 +126,20 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 				return err
 			}
 		}
+
+		// overwrite nested path as a full path to directory
+		srcFullPath := s.replaceRootMask(
+			directory.NestedPath,
+			src.MountPoint,
+		)
+
+		dstFullPath := s.replaceRootMask(
+			directory.NestedPath,
+			dst.MountPoint,
+		)
+
+		directory.NestedPath = srcFullPath
+		dstDirectory.NestedPath = dstFullPath
 
 		// create task for sync files
 		if err = s.configureSyncActions(directory, dstDirectory); err != nil {
@@ -141,6 +157,7 @@ func (s *SyncCommand) PrepareRootPath(
 	nestedPath string,
 ) (err error) {
 	// root, a, b, c, ..., etc. directories from root/a/b/c/etc. path
+	// exclude path with sequences like '..' or longer
 	pathChops := make([]string, 0, DefaultSyncObjectsSize)
 
 	chops := strings.Split(nestedPath, "/")
@@ -157,12 +174,21 @@ func (s *SyncCommand) PrepareRootPath(
 		}
 
 		// if we got 'root' token - replace on real root path
-		chop = strings.Replace(chop, DefaultRootDirMask, rootPath, 1)
+		chop = s.replaceRootMask(chop, rootPath)
 		pathChops = append(pathChops, chop)
 	}
 
 	s.ToCreatePath = append(s.ToCreatePath, pathChops)
 	return err
+}
+
+// replaceRootMask will replace 'root' mask with exact root path. If
+// no 'root' mask found in string - return nestedPath
+func (s *SyncCommand) replaceRootMask(
+	nestedPath string,
+	rootPath string,
+) string {
+	return strings.Replace(nestedPath, DefaultRootDirMask, rootPath, 1)
 }
 
 // configureSyncActions generate tasks to sync and tasks to delete

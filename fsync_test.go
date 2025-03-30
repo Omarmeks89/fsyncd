@@ -244,10 +244,11 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "/home/master/sync-dir",
+						NestedPath: "root/sync-dir",
 						Name:       "sync-dir",
 					},
 				},
+				MountPoint: "/home/master",
 			},
 			dst: SyncMeta{
 				Dirs: map[string]Directory{
@@ -260,10 +261,11 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "/cloud/sync-dir",
+						NestedPath: "root/sync-dir",
 						Name:       "sync-dir",
 					},
 				},
+				MountPoint: "/cloud",
 			},
 			err: nil,
 			res: []SyncPair{
@@ -294,9 +296,11 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "/home/master/sync-dir",
+						NestedPath: "root/sync-dir",
+						Name:       "sync-dir",
 					},
 				},
+				MountPoint: "/home/master",
 			},
 			dst: SyncMeta{
 				Dirs: map[string]Directory{
@@ -309,9 +313,11 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "/cloud/sync-dir",
+						NestedPath: "root/sync-dir",
+						Name:       "sync-dir",
 					},
 				},
+				MountPoint: "/cloud",
 			},
 			err: nil,
 			res: []SyncPair{
