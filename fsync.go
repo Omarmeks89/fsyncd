@@ -24,13 +24,12 @@ const DefaultSyncObjectsSize = 16
 const DefaultRdPerm = 0o0644
 const DefaultWrPerm = 0o0666
 
-// literal const
+// ======== literal const section
 
 // DefaultRootDirMask default name for masked directories
 const DefaultRootDirMask = "root"
 
 var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
-var PathError = fmt.Errorf("sequence like '..' not allowed for path")
 
 type SyncPair struct {
 	// Src full path to source file
@@ -38,40 +37,6 @@ type SyncPair struct {
 
 	// Dst full path to destination file
 	Dst string
-}
-
-type DirectoryNode struct {
-	Parent *DirectoryNode
-
-	// part of path to directory
-	PathPart string
-	Nested   map[string]*DirectoryNode
-
-	Visited bool
-}
-
-func (dn *DirectoryNode) IsRoot() (ok bool, err error) {
-	if dn == nil {
-		return ok, fmt.Errorf("nil DirectoryNode receiver not allowed")
-	}
-
-	if dn.Parent == nil {
-		return true, err
-	}
-
-	return ok, err
-}
-
-func (dn *DirectoryNode) IsLeaf() (ok bool, err error) {
-	if dn == nil {
-		return ok, fmt.Errorf("nil DirectoryNode receiver not allowed")
-	}
-
-	if dn.Nested == nil || len(dn.Nested) == 0 {
-		return true, err
-	}
-
-	return ok, err
 }
 
 // SyncCommand create all data for successful sync execution
