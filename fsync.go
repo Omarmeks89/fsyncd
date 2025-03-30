@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ const DefaultWrPerm = 0o0666
 const DefaultRootDirMask = "root"
 
 var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
+var PathError = fmt.Errorf("sequence like '..' not allowed for path")
 
 type SyncPair struct {
 	// Src full path to source file
@@ -53,18 +55,31 @@ type SyncCommand struct {
 	SyncPairs []SyncPair
 
 	log *logrus.Logger
+
+	// re expression for detect file suffix like (.[a-z]+) group
+	suffDetector *regexp.Regexp
+
+	// re expression for .. and ... head sequences
+	prefDetector *regexp.Regexp
 }
 
 func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand {
 	toDel := make([]string, 0, DefaultSyncObjectsSize)
 	pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
 	paths := make([][]string, 0, DefaultSyncObjectsSize)
+
+	// set trimmer
+	sd := regexp.MustCompile("([a-zA-Zа-яА-Я_0-9\\-]+\\.[a-z]+)")
+	pd := regexp.MustCompile("^\\.{2,}.*")
+
 	return SyncCommand{
 		ToDelete:       toDel,
 		SyncPairs:      pairs,
 		SrcDiffPercent: SrcDiffPercent,
 		ToCreatePath:   paths,
 		log:            log,
+		suffDetector:   sd,
+		prefDetector:   pd,
 	}
 }
 
@@ -119,6 +134,8 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 	return err
 }
 
+// PrepareRootPath prepare path components to create directories
+// inside a dst root directory
 func (s *SyncCommand) PrepareRootPath(
 	rootPath string,
 	nestedPath string,
@@ -129,10 +146,14 @@ func (s *SyncCommand) PrepareRootPath(
 	chops := strings.Split(nestedPath, "/")
 	for _, chop := range chops {
 
-		if strings.Index(chop, ".") > 0 {
-			// it`s a file name, not a directory name with leading dot like '.dir'
-			// skip
+		if s.suffDetector.MatchString(chop) {
 			continue
+		}
+
+		// if path chop contain prefix like '..' (or more)
+		// return path error
+		if s.prefDetector.MatchString(chop) {
+			return PathError
 		}
 
 		// if we got 'root' token - replace on real root path

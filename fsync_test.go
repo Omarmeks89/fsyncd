@@ -437,7 +437,7 @@ func TestSyncCommand_PrepareRootPath(t *testing.T) {
 			},
 		},
 		{
-			name:       "base path configured with .path",
+			name:       "base path configured with hidden .path",
 			rootPath:   "/cloud/root/path",
 			nestedPath: "root/test/.my-proj/config.json",
 			res: [][]string{
@@ -456,6 +456,44 @@ func TestSyncCommand_PrepareRootPath(t *testing.T) {
 				_ = sm.PrepareRootPath(tt.rootPath, tt.nestedPath)
 
 				require.Equal(t, tt.res[0], sm.ToCreatePath[0])
+			},
+		)
+	}
+}
+
+func TestSyncCommand_PrepareRootPath1(t *testing.T) {
+	tests := []struct {
+		name       string
+		rootPath   string
+		nestedPath string
+		err        error
+	}{
+		{
+			name:       "invalid path got empty result",
+			rootPath:   "/cloud/root/path",
+			nestedPath: "root/test/..my-proj/config.json",
+			err:        PathError,
+		},
+		{
+			name:       "invalid path got empty result (2)",
+			rootPath:   "/cloud/root/path",
+			nestedPath: "root/test/../.my-proj/config.json",
+			err:        PathError,
+		},
+		{
+			name:       "invalid path got empty result (3)",
+			rootPath:   "/cloud/root/path",
+			nestedPath: "root/test/........my-proj/config.json",
+			err:        PathError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(
+			tt.name, func(t *testing.T) {
+				sm := MakeSyncCommand(logrus.New(), 30)
+				_ = sm.PrepareRootPath(tt.rootPath, tt.nestedPath)
+
+				require.EqualError(t, PathError, tt.err.Error())
 			},
 		)
 	}

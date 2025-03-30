@@ -55,7 +55,7 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (49.0%)</option>
+				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (49.6%)</option>
 				
 				<option value="file1">github.com/Omarmeks89/fsyncd/log.go (0.0%)</option>
 				
@@ -85,6 +85,7 @@ import (
         "fmt"
         "io"
         "os"
+        "regexp"
         "strings"
         "time"
 
@@ -100,7 +101,13 @@ const DefaultSyncObjectsSize = 16
 const DefaultRdPerm = 0o0644
 const DefaultWrPerm = 0o0666
 
+// literal const
+
+// DefaultRootDirMask default name for masked directories
+const DefaultRootDirMask = "root"
+
 var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
+var PathError = fmt.Errorf("sequence like '..' not allowed for path")
 
 type SyncPair struct {
         // Src full path to source file
@@ -117,21 +124,39 @@ type SyncCommand struct {
         // ToDelete contain full paths for files have to be deleted
         ToDelete []string
 
+        // Nodes collection to create path inside dst root directory
+        ToCreatePath [][]string
+
         // SyncPairs (src, dst) contain full source and destination paths
         // for synchronized objects
         SyncPairs []SyncPair
 
         log *logrus.Logger
+
+        // re expression for detect file suffix like (.[a-z]+) group
+        suffDetector *regexp.Regexp
+
+        // re expression for .. and ... head sequences
+        prefDetector *regexp.Regexp
 }
 
 func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand <span class="cov8" title="1">{
         toDel := make([]string, 0, DefaultSyncObjectsSize)
         pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
+        paths := make([][]string, 0, DefaultSyncObjectsSize)
+
+        // set trimmer
+        sd := regexp.MustCompile("([a-zA-Zа-яА-Я_0-9\\-]+\\.[a-z]+)")
+        pd := regexp.MustCompile("^\\.{2,}.*")
+
         return SyncCommand{
                 ToDelete:       toDel,
                 SyncPairs:      pairs,
                 SrcDiffPercent: SrcDiffPercent,
+                ToCreatePath:   paths,
                 log:            log,
+                suffDetector:   sd,
+                prefDetector:   pd,
         }
 }</span>
 
@@ -147,6 +172,7 @@ func (s *SyncCommand) Prepare(src SyncMeta, dst SyncMeta) (err error) <span clas
 // prepare nested do all work
 func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov8" title="1">{
         var ok bool
+        var dstDirectory Directory
 
         // check size diff (less than x%) between src and dest directories
         if ok, err = s.CompareRoot(&amp;src, &amp;dst); !ok </span><span class="cov8" title="1">{
@@ -159,16 +185,68 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span clas
                 <span class="cov8" title="1">return TooLargeDifferenceErr</span>
         }
 
-        // compare fetched metadata - check size diff
-        <span class="cov8" title="1">for i := 0; i &lt; len(src.Dirs); i++ </span><span class="cov8" title="1">{
+        <span class="cov8" title="1">for dirName, directory := range src.Dirs </span><span class="cov8" title="1">{
+                if dstDirectory, ok = dst.Dirs[dirName]; !ok </span><span class="cov0" title="0">{
 
-                // add objects for delete (not in master) -&gt; Delete()
-                if err = s.configureSyncActions(src.Dirs[i], dst.Dirs[i]); err != nil </span><span class="cov0" title="0">{
+                        if dirName == DefaultRootDirMask </span><span class="cov0" title="0">{
+                                // opposite root dir not created, we can`t continue
+                                return fmt.Errorf("no root destination directory")
+                        }</span>
+
+                        // create sync pair for files future dirs
+                        <span class="cov0" title="0">if err = s.PrepareRootPath(
+                                dst.MountPoint,
+                                directory.NestedPath,
+                        ); err != nil </span><span class="cov0" title="0">{
+                                return err
+                        }</span>
+                }
+
+                // create task for sync files
+                <span class="cov8" title="1">if err = s.configureSyncActions(directory, dstDirectory); err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
         }
 
         <span class="cov8" title="1">return err</span>
+}
+
+// PrepareRootPath prepare path components to create directories
+// inside a dst root directory
+func (s *SyncCommand) PrepareRootPath(
+        rootPath string,
+        nestedPath string,
+) (err error) <span class="cov8" title="1">{
+        // root, a, b, c, ..., etc. directories from root/a/b/c/etc. path
+        pathChops := make([]string, 0, DefaultSyncObjectsSize)
+
+        chops := strings.Split(nestedPath, "/")
+        for _, chop := range chops </span><span class="cov8" title="1">{
+
+                if s.suffDetector.MatchString(chop) </span><span class="cov8" title="1">{
+                        continue</span>
+                }
+
+                // if path chop contain prefix like '..' (or more)
+                // return path error
+                <span class="cov8" title="1">if s.prefDetector.MatchString(chop) </span><span class="cov8" title="1">{
+                        return PathError
+                }</span>
+
+                // is better to match with re
+                // if strings.Index(chop, ".") &gt; 0 {
+                //         // it`s a file name, not a directory name with leading dot like '.dir'
+                //         // skip
+                //         continue
+                // }
+
+                // if we got 'root' token - replace on real root path
+                <span class="cov8" title="1">chop = strings.Replace(chop, DefaultRootDirMask, rootPath, 1)
+                pathChops = append(pathChops, chop)</span>
+        }
+
+        <span class="cov8" title="1">s.ToCreatePath = append(s.ToCreatePath, pathChops)
+        return err</span>
 }
 
 // configureSyncActions generate tasks to sync and tasks to delete
@@ -179,12 +257,12 @@ func (s *SyncCommand) configureSyncActions(
         var srcPath, dstPath, fPath string
 
         for k, v := range src.Files </span><span class="cov8" title="1">{
-                srcPath, err = s.mergePath(s.prepareRoot(src.Root), "/", k)
+                srcPath, err = s.mergePath(s.prepareRoot(src.NestedPath), "/", k)
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
 
-                <span class="cov8" title="1">dstPath, err = s.mergePath(s.prepareRoot(dst.Root), "/", k)
+                <span class="cov8" title="1">dstPath, err = s.mergePath(s.prepareRoot(dst.NestedPath), "/", k)
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
@@ -211,7 +289,7 @@ func (s *SyncCommand) configureSyncActions(
 
         <span class="cov8" title="1">for k, _ := range dst.Files </span><span class="cov8" title="1">{
 
-                fPath, err = s.mergePath(s.prepareRoot(dst.Root), "/", k)
+                fPath, err = s.mergePath(s.prepareRoot(dst.NestedPath), "/", k)
                 if err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
@@ -278,8 +356,15 @@ type Directory struct {
         // Files collection of file names (as key) and meta information (as value)
         Files map[string]FileMeta
 
-        // Root path to directory (without filename)
-        Root string
+        // NestedPath path to directory (inside root directory without filename)
+        NestedPath string
+
+        // masked directory name in case we
+        // need to have same dir names for speedup search
+        Mask string
+
+        // current directory real name
+        Name string
 }
 
 func (dir *Directory) FilesCount() int <span class="cov8" title="1">{
@@ -296,14 +381,17 @@ type FileMeta struct {
 // objects
 type SyncMeta struct {
         // slice of directories for sync
-        Dirs []Directory
+        Dirs map[string]Directory
+
+        // MountPoint is equal to root path
+        MountPoint string
 }
 
 const DefaultDirAllocSize = 16
 
 // MakeSyncMeta factory function return new SyncMeta object
 func MakeSyncMeta() SyncMeta <span class="cov0" title="0">{
-        dirs := make([]Directory, 0, DefaultDirAllocSize)
+        dirs := make(map[string]Directory, DefaultDirAllocSize)
         return SyncMeta{
                 Dirs: dirs,
         }
@@ -312,26 +400,55 @@ func MakeSyncMeta() SyncMeta <span class="cov0" title="0">{
 // MakeMeta iterate through internal root directory objects
 // and collect meta information about files
 func (sm *SyncMeta) MakeMeta(root string) (err error) <span class="cov0" title="0">{
-        var files []os.DirEntry
-        var buf strings.Builder
+        // handle nil pointer
         var info os.FileInfo
 
-        // handle nil pointer
         if sm == nil </span><span class="cov0" title="0">{
                 return fmt.Errorf("nil SyncMeta pointer")
         }</span>
 
-        <span class="cov0" title="0">if files, err = os.ReadDir(root); err != nil </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if info, err = os.Stat(root); os.IsNotExist(err) </span><span class="cov0" title="0">{
                 return err
         }</span>
 
-        <span class="cov0" title="0">currDir := Directory{}
+        // set mount point
+        <span class="cov0" title="0">sm.MountPoint = root
+
+        // build root directory with masked name - later
+        // we can find root dirs at sync start by this name
+        files := make(map[string]FileMeta, DefaultSyncObjectsSize)
+        dir := Directory{
+                Mask:       DefaultRootDirMask,
+                Name:       info.Name(), // set real name to Name
+                NestedPath: root,
+                Files:      files,
+        }
+
+        sm.Dirs[dir.Mask] = dir
+        return sm.makeMeta(root, dir.Mask)</span>
+}
+
+// makeMeta do all job
+func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) <span class="cov0" title="0">{
+        var files []os.DirEntry
+        var buf strings.Builder
+        var info os.FileInfo
+
+        if files, err = os.ReadDir(root); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">currDir := sm.Dirs[dirName]
+
         for _, file := range files </span><span class="cov0" title="0">{
                 buf.WriteString(root)
                 buf.WriteString("/")
                 buf.WriteString(file.Name())
 
                 fPath := buf.String()
+
+                fmt.Printf("%s, %s, %s\n", fPath, root, file.Name())
+
                 if ok := file.IsDir(); !ok </span><span class="cov0" title="0">{
 
                         // is a file, let`s add file meta into Directory
@@ -346,15 +463,37 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) <span class="cov0" title="
                         continue</span>
                 }
 
+                // create new nested directory
+                <span class="cov0" title="0">fCollection := make(map[string]FileMeta, DefaultSyncObjectsSize)
+                dir := Directory{
+                        Mask:       "",
+                        Name:       file.Name(), // set real name to Name
+                        NestedPath: fPath,
+                        Files:      fCollection,
+                }
+
+                // save nested directories by real name because
+                // they have to be same between synced directories
+                // (but root paths are different)
+                sm.Dirs[dir.Name] = dir
+
                 // is another directory - dive
-                <span class="cov0" title="0">if err = sm.MakeMeta(fPath); err != nil </span><span class="cov0" title="0">{
+                if err = sm.makeMeta(fPath, dir.Name); err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
+
+                <span class="cov0" title="0">buf.Reset()</span>
         }
 
-        // add visited dir to collection
-        <span class="cov0" title="0">sm.Dirs = append(sm.Dirs, currDir)
-        return err</span>
+        <span class="cov0" title="0">return err</span>
+}
+
+// FilesCount return count of files
+func (sm *SyncMeta) FilesCount() (size int) <span class="cov8" title="1">{
+        for _, directory := range sm.Dirs </span><span class="cov8" title="1">{
+                size += directory.FilesCount()
+        }</span>
+        <span class="cov8" title="1">return size</span>
 }
 
 // fclose internal function for deferred error handling from closed files.
@@ -363,14 +502,6 @@ func fclose(log *logrus.Logger, file io.ReadWriteCloser) <span class="cov0" titl
         if err := file.Close(); err != nil </span><span class="cov0" title="0">{
                 log.Error(err)
         }</span>
-}
-
-// FilesCount return count of files
-func (sm *SyncMeta) FilesCount() (size int) <span class="cov8" title="1">{
-        for i := 0; i &lt; len(sm.Dirs); i++ </span><span class="cov8" title="1">{
-                size += sm.Dirs[i].FilesCount()
-        }</span>
-        <span class="cov8" title="1">return size</span>
 }
 
 // Sync files pair
@@ -404,11 +535,8 @@ func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) <s
 
         // alloc buffer if files opened
         <span class="cov0" title="0">buf := make([]byte, DefaultBufferSize)
-        if _, err = io.CopyBuffer(dstFile, srcFile, buf); err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov0" title="0">return err</span>
+        _, err = io.CopyBuffer(dstFile, srcFile, buf)
+        return err</span>
 }
 </pre>
 		
@@ -440,10 +568,16 @@ func SetupLogger() (log *logrus.Logger, err error) <span class="cov0" title="0">
 		
 		<pre class="file" id="file2" style="display: none">package main
 
-func main() {<span class="cov0" title="0">
-        //var d = -1
-        //fmt.Printf("%d\n", -d)
-}</span>
+import (
+        "log"
+)
+
+func main() <span class="cov0" title="0">{
+        sm := MakeSyncMeta()
+        if err := sm.MakeMeta("a"); err != nil </span><span class="cov0" title="0">{
+                log.Fatal(err)
+        }</span>
+}
 </pre>
 		
 		<pre class="file" id="file3" style="display: none">// contain types and functions to work with unix socket
