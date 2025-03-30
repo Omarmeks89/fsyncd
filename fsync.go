@@ -4,13 +4,11 @@
 package main
 
 import (
-	"container/list"
 	"context"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
-	"regexp"
 	"strings"
 	"time"
 
@@ -81,46 +79,36 @@ type SyncCommand struct {
 	// max possible difference between directories
 	SrcDiffPercent int
 
-	// ToDelete contain full paths for files have to be deleted
+	// FilesToDelete contain full paths for files have to be deleted
 	// collect in map to run parallel
-	ToDelete map[string][]string
+	FilesToDelete map[string][]string
 
-	// Nodes collection to create path inside dst root directory
-	DirGraph *DirectoryNode
+	// full paths for create directories
+	DirsToCreate []string
+
+	// full path to dirs to delete
+	DirsToDelete []string
 
 	// SyncPairs (src, dst) contain full source and destination paths
 	// for synchronized objects
 	SyncPairs []SyncPair
 
 	log *logrus.Logger
-
-	// re expression for detect file suffix like ([a-z...]\\.[a-z]+) group
-	suffDetector *regexp.Regexp
-
-	// re expression for .. and ... head sequences
-	prefDetector *regexp.Regexp
 }
 
 func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand {
 	toDel := make(map[string][]string, DefaultSyncObjectsSize)
 	pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
-
-	// alloc memory for paths graph
-	paths := &DirectoryNode{
-		Nested: make(map[string]*DirectoryNode, DefaultSyncObjectsSize),
-	}
-
-	sd := regexp.MustCompile("([a-zA-Zа-яА-Я_0-9\\-]+\\.[a-z]+)")
-	pd := regexp.MustCompile("^\\.{2,}.*")
+	paths := make([]string, 0, DefaultSyncObjectsSize)
+	dirsToDel := make([]string, 0, DefaultSyncObjectsSize)
 
 	return SyncCommand{
-		ToDelete:       toDel,
+		FilesToDelete:  toDel,
 		SyncPairs:      pairs,
 		SrcDiffPercent: SrcDiffPercent,
-		DirGraph:       paths,
+		DirsToCreate:   paths,
+		DirsToDelete:   dirsToDel,
 		log:            log,
-		suffDetector:   sd,
-		prefDetector:   pd,
 	}
 }
 
@@ -151,23 +139,6 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 
 	for dirName, directory := range src.Dirs {
 
-		// directory not found in dst directory - we have
-		// to make task to create this directory in dst
-		if dstDirectory, ok = dst.Dirs[dirName]; !ok {
-
-			if dirName == DefaultRootDirMask {
-				// opposite root dir not created, we can`t continue
-				return fmt.Errorf("no root destination directory")
-			}
-
-			if err = s.PrepareRootPath(
-				dst.MountPoint,
-				directory.NestedPath,
-			); err != nil {
-				return err
-			}
-		}
-
 		// overwrite nested path as a full path to directory
 		srcFullPath := s.replaceRootMask(
 			directory.NestedPath,
@@ -178,6 +149,18 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 			directory.NestedPath,
 			dst.MountPoint,
 		)
+
+		// directory not found in dst directory - we have
+		// to make task to create this directory in dst
+		if dstDirectory, ok = dst.Dirs[dirName]; !ok {
+
+			if dirName == DefaultRootDirMask {
+				// opposite root dir not created, we can`t continue
+				return fmt.Errorf("no root destination directory")
+			}
+
+			s.DirsToCreate = append(s.DirsToCreate, dstFullPath)
+		}
 
 		directory.NestedPath = srcFullPath
 		dstDirectory.NestedPath = dstFullPath
@@ -194,70 +177,18 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 		}
 	}
 
-	return err
-}
+	// add directories (that not exists in src) to delete
+	for dirname, dstDir := range dst.Dirs {
 
-// PrepareRootPath prepare path components to create directories
-// inside a dst root directory
-func (s *SyncCommand) PrepareRootPath(
-	rootPath string,
-	nestedPath string,
-) (err error) {
-	var currNode, nested *DirectoryNode
-	var ok bool
+		if _, ok = src.Dirs[dirname]; !ok {
+			// directory not exists in source - delete
+			dstFullPath := s.replaceRootMask(
+				dstDir.NestedPath,
+				dst.MountPoint,
+			)
 
-	// init root node and set path (if not exists)
-	currNode = s.DirGraph
-	if currNode == nil {
-		return fmt.Errorf("directory graph not allocated")
-	}
-
-	if currNode.PathPart == "" {
-		currNode.PathPart = rootPath
-	}
-
-	// root, a, b, c, ..., etc. directories from root/a/b/c/etc. path
-	// exclude path with sequences like '..' or longer
-	chops := strings.Split(nestedPath, "/")
-	if len(chops) < 2 {
-		// return error - no valid path to create (root exists)
-		return fmt.Errorf("invalid path chops count or no paths al all")
-	}
-
-	// exclude root element
-	for _, chop := range chops[1:] {
-
-		if s.suffDetector.MatchString(chop) {
-			continue
+			s.DirsToDelete = append(s.DirsToDelete, dstFullPath)
 		}
-
-		// if path chop contain prefix like '..' (or more)
-		// return path error
-		if s.prefDetector.MatchString(chop) {
-			return PathError
-		}
-
-		newDirNode := &DirectoryNode{
-			Parent:   currNode,
-			PathPart: chop,
-			Nested: make(
-				map[string]*DirectoryNode,
-				DefaultSyncObjectsSize,
-			),
-		}
-
-		if nested, ok = currNode.Nested[chop]; !ok {
-			// add to Nested in current Node and update pointer
-			currNode.Nested[chop] = newDirNode
-			currNode = newDirNode
-			continue
-		}
-
-		// nested node exists - change Parent and add new node to nested
-		// update pointer on nested
-		newDirNode.Parent = nested
-		nested.Nested[chop] = newDirNode
-		currNode = nested
 	}
 
 	return err
@@ -323,7 +254,7 @@ func (s *SyncCommand) configureSyncActions(
 		}
 
 		// add full path to destination
-		s.ToDelete[delKey] = append(s.ToDelete[delKey], fPath)
+		s.FilesToDelete[delKey] = append(s.FilesToDelete[delKey], fPath)
 	}
 
 	return nil
@@ -532,8 +463,12 @@ func fclose(log *logrus.Logger, file io.ReadWriteCloser) {
 	}
 }
 
-// Sync files pair
-func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) {
+// SyncFiles files pair
+func SyncFiles(
+	ctx context.Context,
+	log *logrus.Logger,
+	pair SyncPair,
+) (err error) {
 	var srcFile, dstFile io.ReadWriteCloser
 
 	// open src (take permissions from sync pair)
@@ -567,67 +502,28 @@ func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) {
 	return err
 }
 
-func DeleteFiles(files []string) (err error) {
-	for _, file := range files {
-
-		if err = os.Remove(file); err != nil {
-			return err
-		}
+// DeleteFile delete wished file. If file not exists return nil, if
+// any error - error will be type *PathError
+func DeleteFile(file string) (err error) {
+	if _, err = os.Stat(file); err == nil {
+		return os.Remove(file)
+	}
+	if err != nil && os.IsNotExist(err) {
+		// if file not exists - no error
+		return nil
 	}
 	return err
 }
 
-func CreateDirectoriesBFS(
-	root *DirectoryNode,
+// DeleteDirectory use RemoveAll under the hood
+func DeleteDirectory(dir string) (err error) {
+	return os.RemoveAll(dir)
+}
+
+// CreateDirectories use MkdirAll under the hood
+func CreateDirectories(
+	root string,
 	perm fs.FileMode,
 ) (err error) {
-	var dq *list.List
-	var buf strings.Builder
-	var ok bool
-
-	if root == nil {
-		return fmt.Errorf("nil pointer on dir root")
-	}
-
-	dq = list.New()
-
-	dq.PushBack(root)
-	for dq.Len() != 0 {
-
-		// we dont care about nil ptr here
-		elem := dq.Front()
-		node := elem.Value.(*DirectoryNode)
-		dq.Remove(elem)
-
-		for _, directoryNode := range node.Nested {
-
-			buf.WriteString(node.PathPart)
-			buf.WriteString("/")
-			buf.WriteString(directoryNode.PathPart)
-
-			// create new directory
-			if err = os.Mkdir(buf.String(), perm); err != nil {
-				return err
-			}
-
-			// set new path
-			if ok, err = directoryNode.IsLeaf(); err != nil {
-				return err
-			}
-
-			if !ok {
-				// nested dir is not a leaf we should handle
-				// it -> update path and add into deque
-				directoryNode.PathPart = buf.String()
-				dq.PushBack(directoryNode)
-			}
-
-			// skip leaf dir
-			buf.Reset()
-		}
-
-		// we handle all nested nodes - mark current node as visited
-		node.Visited = true
-	}
-	return err
+	return os.MkdirAll(root, perm)
 }

@@ -81,9 +81,9 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 				cmd := MakeSyncCommand(log, tt.diffPercent)
 				_ = cmd.configureSyncActions(tt.srcD, tt.dstD)
 
-				fmt.Printf("%+v, %+v\n", cmd.ToDelete, tt.waitToDelete)
+				fmt.Printf("%+v, %+v\n", cmd.FilesToDelete, tt.waitToDelete)
 
-				require.Equal(t, tt.waitToDelete, cmd.ToDelete)
+				require.Equal(t, tt.waitToDelete, cmd.FilesToDelete)
 			},
 		)
 	}
@@ -433,127 +433,6 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 				err := cmd.Prepare(tt.src, tt.dst)
 
 				require.EqualError(t, err, tt.err.Error())
-			},
-		)
-	}
-}
-
-func TestSyncCommand_PrepareRootPath(t *testing.T) {
-	var dn *DirectoryNode
-	var ok bool
-
-	tests := []struct {
-		name        string
-		rootPath    string
-		nestedPath  string
-		createdKeys []string
-		res         *DirectoryNode
-	}{
-		{
-			name:        "base path configured",
-			rootPath:    "/cloud/root/path",
-			nestedPath:  "root/test/my-proj/config.json",
-			createdKeys: []string{"test", "my-proj"},
-			res: &DirectoryNode{
-				Nested: map[string]*DirectoryNode{
-					"test": &DirectoryNode{
-						Nested: map[string]*DirectoryNode{
-							"my-proj": &DirectoryNode{
-								PathPart: "my-proj",
-							},
-						},
-						PathPart: "test",
-					},
-				},
-				PathPart: "/cloud/root/path",
-			},
-		},
-		{
-			name:        "more complex path configured",
-			rootPath:    "/cloud/root/path",
-			nestedPath:  "root/test/my-proj/data/upd/.ref.txt",
-			createdKeys: []string{"test", "my-proj", "data", "upd"},
-			res: &DirectoryNode{
-				Nested: map[string]*DirectoryNode{
-					"test": &DirectoryNode{
-						Nested: map[string]*DirectoryNode{
-							"my-proj": &DirectoryNode{
-								PathPart: "my-proj",
-								Nested: map[string]*DirectoryNode{
-									"data": &DirectoryNode{
-										PathPart: "data",
-										Nested: map[string]*DirectoryNode{
-											"upd": &DirectoryNode{
-												PathPart: "upd",
-											},
-										},
-									},
-								},
-							},
-						},
-						PathPart: "test",
-					},
-				},
-				PathPart: "/cloud/root/path",
-			},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(
-			tt.name, func(t *testing.T) {
-				sm := MakeSyncCommand(logrus.New(), 30)
-				_ = sm.PrepareRootPath(tt.rootPath, tt.nestedPath)
-
-				dn = sm.DirGraph
-
-				for i, key := range tt.createdKeys {
-					dn, ok = dn.Nested[key]
-					require.Equal(t, true, ok)
-
-					if i == len(tt.createdKeys)-1 {
-						// check last dn is Leaf
-						ok, _ = dn.IsLeaf()
-						require.Equal(t, true, ok)
-					}
-				}
-			},
-		)
-	}
-}
-
-func TestSyncCommand_PrepareRootPathReturnPathError(t *testing.T) {
-	tests := []struct {
-		name       string
-		rootPath   string
-		nestedPath string
-		err        error
-	}{
-		{
-			name:       "invalid path got empty result",
-			rootPath:   "/cloud/root/path",
-			nestedPath: "root/test/..my-proj/config.json",
-			err:        PathError,
-		},
-		{
-			name:       "invalid path got empty result (2)",
-			rootPath:   "/cloud/root/path",
-			nestedPath: "root/test/../.my-proj/config.json",
-			err:        PathError,
-		},
-		{
-			name:       "invalid path got empty result (3)",
-			rootPath:   "/cloud/root/path",
-			nestedPath: "root/test/........my-proj/config.json",
-			err:        PathError,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(
-			tt.name, func(t *testing.T) {
-				sm := MakeSyncCommand(logrus.New(), 30)
-				_ = sm.PrepareRootPath(tt.rootPath, tt.nestedPath)
-
-				require.EqualError(t, PathError, tt.err.Error())
 			},
 		)
 	}
