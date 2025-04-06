@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sync/errgroup"
 	"net/http"
 	"os/signal"
 	"sync"
 	"syscall"
-	"time"
 )
 
 var BrokenServer = fmt.Errorf("broken server")
@@ -60,14 +58,28 @@ type Server struct {
 	g   *gin.Engine
 	b   *Block
 	log *logrus.Logger
+	cfg *ServerConfig
 }
 
 // MakeServer factory function for create new server to handle API
-func MakeServer(log *logrus.Logger, b *Block) *Server {
+func MakeServer(cfg *ServerConfig, log *logrus.Logger, b *Block) (
+	s *Server,
+	err error,
+) {
+	if cfg == nil || log == nil || b == nil {
+		return s, fmt.Errorf(
+			"nil configuration attr: c=%p, l=%p, b=%p",
+			cfg,
+			log,
+			b,
+		)
+	}
+
 	return &Server{
 		b:   b,
 		log: log,
-	}
+		cfg: cfg,
+	}, err
 }
 
 func (srv *Server) HandleSyncCommand(c *gin.Context) {
@@ -81,7 +93,7 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) {
 		)
 	}
 
-	// validate request
+	// Validate request
 	if err = c.BindJSON(&syncReq); err != nil {
 		_ = c.AbortWithError(http.StatusBadRequest, err)
 	}
@@ -102,21 +114,15 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) {
 
 // UpdateConfiguration command for update server sync configuration
 func (srv *Server) UpdateConfiguration(c *gin.Context) {
-
+	c.IndentedJSON(http.StatusOK, 200)
 }
 
 func (srv *Server) GetCurrentConfig(c *gin.Context) {
-
+	c.IndentedJSON(http.StatusOK, 200)
 }
 
 // Run server
-func (srv *Server) Run(
-	ctx context.Context,
-	host string,
-	port string,
-) (err error) {
-	var g errgroup.Group
-
+func (srv *Server) Run(ctx context.Context) (err error) {
 	if srv == nil {
 		return BrokenServer
 	}
@@ -129,37 +135,32 @@ func (srv *Server) Run(
 		return err
 	}
 
-	addr := fmt.Sprintf("%s:%s", host, port)
+	addr := fmt.Sprintf("%s:%s", srv.cfg.Host, srv.cfg.Port)
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      srv.g,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		ReadTimeout:  srv.cfg.ConnReadTimeout,
+		WriteTimeout: srv.cfg.ConnWriteTimeout,
 	}
 
-	g.Go(
-		func() error {
-			if err = server.ListenAndServe(); err != nil && !errors.Is(
-				err,
-				http.ErrServerClosed,
-			) {
-				return err
-			}
-
-			return nil
-		},
-	)
+	go func() {
+		if err = server.ListenAndServe(); err != nil && !errors.Is(
+			err,
+			http.ErrServerClosed,
+		) {
+			srv.log.Error(err)
+		}
+	}()
 
 	<-sCtx.Done()
 	stop()
 
-	if err = g.Wait(); err != nil {
-		srv.log.Errorf("%s", err.Error())
-	}
-
 	srv.log.Debugf("shutting down gracefully, press Ctrl + C to force")
 
-	nc, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	nc, cancel := context.WithTimeout(
+		context.Background(),
+		srv.cfg.GracefulShutdownTimeout,
+	)
 	defer cancel()
 
 	if err = server.Shutdown(nc); err != nil {
@@ -171,6 +172,9 @@ func (srv *Server) Run(
 }
 
 func (srv *Server) setup() (err error) {
+	// set loglevel for gin
+	gin.SetMode(gin.DebugMode)
+
 	srv.g = gin.Default()
 
 	// register sync handler

@@ -1,0 +1,35 @@
+# === general application settings like
+# host, port, docs addr etc
+host: 0.0.0.0
+port: 6767
+swagger_enabled: true
+
+# === swagger_port not required if swagger disabled
+swagger_port: 6768
+
+# === sync part
+# each path must exist
+src_path: /
+dst_path: /
+
+# difference percent between two directories
+# if diff is bigger than max_diff_percent, operation
+# will be break
+max_diff_percent: 35
+
+# === connection timeouts
+conn_read_timeout: 10s
+conn_write_timeout: 10s
+graceful_shutdown_timeout: 5s
+
+# === CORS section
+allowed_hosts: ["*"]
+allowed_methods: ["*"]
+allowed_headers: ["*"]
+
+# === logging
+time_format: "15:04:05 02-01-2006"
+
+# allowed: INFO, WARN, DEBUG, ERROR, PANIC, FATAL
+# (case-insensitive)
+log_level: debug
