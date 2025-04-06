@@ -4,17 +4,13 @@
 package main
 
 import (
-	"context"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sync/errgroup"
 )
 
 // DefaultBufferSize for intermediate buffer
@@ -24,14 +20,9 @@ const DefaultDirAllocSize = 16
 
 // DefaultSyncObjectsSize set allocation size for nested SyncCommand collections
 const DefaultSyncObjectsSize = 16
-const DefaultRdPerm = 0o0644
-
-// ======== literal const section
-
-const DefaultWrPerm = 0o0666
 
 // DefaultRootDirMask default name for masked directories
-const DefaultRootDirMask = "root"
+const DefaultRootDirMask = "%-m-%"
 
 var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
 
@@ -46,6 +37,15 @@ type SyncPair struct {
 	Perm fs.FileMode
 }
 
+// NewDirectory is used for create new directory in dst
+type NewDirectory struct {
+	// full path for create directory
+	DirPath string
+
+	// directory permissions
+	DirMode fs.FileMode
+}
+
 // SyncCommand create all data for successful sync execution
 type SyncCommand struct {
 	// max possible difference between directories
@@ -56,7 +56,7 @@ type SyncCommand struct {
 	FilesToDelete map[string][]string
 
 	// full paths for create directories
-	DirsToCreate []string
+	DirsToCreate []NewDirectory
 
 	// full path to dirs to delete
 	DirsToDelete []string
@@ -71,7 +71,7 @@ type SyncCommand struct {
 func MakeSyncCommand(SrcDiffPercent int) SyncCommand {
 	toDel := make(map[string][]string, DefaultSyncObjectsSize)
 	pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
-	paths := make([]string, 0, DefaultSyncObjectsSize)
+	paths := make([]NewDirectory, 0, DefaultSyncObjectsSize)
 	dirsToDel := make([]string, 0, DefaultSyncObjectsSize)
 
 	return SyncCommand{
@@ -90,6 +90,32 @@ func (s *SyncCommand) Prepare(src SyncMeta, dst SyncMeta) (err error) {
 		return fmt.Errorf("nil receiver not allowed")
 	}
 	return s.prepare(src, dst)
+}
+
+// CompareRoot src and dest directory
+// return true if entries count are equal or src - dest < x% different
+func (s *SyncCommand) CompareRoot(src Sized, dest Sized) (
+	status bool,
+	err error,
+) {
+	if s == nil {
+		return status, fmt.Errorf("nil receiver not allowed")
+	}
+
+	if src == nil || dest == nil {
+		return status, fmt.Errorf("nil container not allowed")
+	}
+
+	srcSize, dstSize := src.FilesCount(), dest.FilesCount()
+	diff := srcSize - dstSize
+	if diff < 0 {
+		diff = -diff
+	}
+	maxObj := max(srcSize, dstSize)
+	percent := int(float64(diff) / float64(maxObj) * 100)
+
+	// check that diff is less than max possible
+	return percent < s.SrcDiffPercent, err
 }
 
 // prepare nested do all work
@@ -130,7 +156,11 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 				return fmt.Errorf("no root destination directory")
 			}
 
-			s.DirsToCreate = append(s.DirsToCreate, dstFullPath)
+			newDir := NewDirectory{
+				DirPath: dstFullPath,
+				DirMode: directory.Perm,
+			}
+			s.DirsToCreate = append(s.DirsToCreate, newDir)
 		}
 
 		directory.NestedPath = srcFullPath
@@ -140,9 +170,6 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 		// group files for delete (if exists)
 		if dstDirectory.Name == "" {
 			dstDirectory.Name = directory.Name
-
-			// inherit permissions from source
-			dstDirectory.Perm = directory.Perm
 		}
 
 		// create task for sync files
@@ -196,9 +223,10 @@ func (s *SyncCommand) configureSyncActions(
 		}
 
 		syncPair := SyncPair{
-			Src:  srcPath,
-			Dst:  dstPath,
-			Perm: src.Perm,
+			Src: srcPath,
+			Dst: dstPath,
+			// dest inherit file permissions from source
+			Perm: v.Perm,
 		}
 
 		// if file by key not exists we will handle empty time value
@@ -207,6 +235,9 @@ func (s *SyncCommand) configureSyncActions(
 			// have newer version (latest modification time) than
 			// file in master directory
 			syncPair.Src, syncPair.Dst = syncPair.Dst, syncPair.Src
+
+			// update permissions for source file
+			syncPair.Perm = dst.Files[k].Perm
 		}
 
 		if _, ok := dst.Files[k]; ok {
@@ -240,32 +271,6 @@ func (s *SyncCommand) prepareRoot(root string) string {
 		return "."
 	}
 	return root
-}
-
-// CompareRoot src and dest directory
-// return true if entries count are equal or src - dest < x% different
-func (s *SyncCommand) CompareRoot(src Sized, dest Sized) (
-	status bool,
-	err error,
-) {
-	if s == nil {
-		return status, fmt.Errorf("nil receiver not allowed")
-	}
-
-	if src == nil || dest == nil {
-		return status, fmt.Errorf("nil container not allowed")
-	}
-
-	srcSize, dstSize := src.FilesCount(), dest.FilesCount()
-	diff := srcSize - dstSize
-	if diff < 0 {
-		diff = -diff
-	}
-	maxObj := max(srcSize, dstSize)
-	percent := int(float64(diff) / float64(maxObj) * 100)
-
-	// check that diff is less than max possible
-	return percent < s.SrcDiffPercent, err
 }
 
 func (s *SyncCommand) mergePath(str ...string) (res string, err error) {
@@ -367,6 +372,14 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) {
 	return sm.makeMeta(root, dir.Mask)
 }
 
+// FilesCount return count of files
+func (sm *SyncMeta) FilesCount() (size int) {
+	for _, directory := range sm.Dirs {
+		size += directory.FilesCount()
+	}
+	return size
+}
+
 // makeMeta do all job
 func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
 	var files []os.DirEntry
@@ -424,324 +437,6 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
 		}
 
 		buf.Reset()
-	}
-
-	return err
-}
-
-// FilesCount return count of files
-func (sm *SyncMeta) FilesCount() (size int) {
-	for _, directory := range sm.Dirs {
-		size += directory.FilesCount()
-	}
-	return size
-}
-
-// fclose internal function for deferred error handling from closed files.
-// Can close readers and writers
-func fclose(log *logrus.Logger, file io.ReadWriteCloser) {
-	if err := file.Close(); err != nil {
-		log.Error(err)
-	}
-}
-
-// SyncFiles files pair
-func SyncFiles(
-	ctx context.Context,
-	log *logrus.Logger,
-	pair SyncPair,
-) (err error) {
-	var srcFile, dstFile io.ReadWriteCloser
-
-	// open src (take permissions from sync pair)
-	srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, pair.Perm)
-	if err != nil {
-		return err
-	}
-
-	defer fclose(log, srcFile)
-
-	// open dst (create file if not exists)
-	dstFile, err = os.OpenFile(pair.Src, os.O_CREATE|os.O_RDWR, pair.Perm)
-	if err != nil {
-		return err
-	}
-
-	defer fclose(log, dstFile)
-
-	// handle ctx or signal (graceful shutdown)
-	// later we can`t stop operation - it may break file...
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		break
-	}
-
-	// alloc buffer if files opened
-	buf := make([]byte, DefaultBufferSize)
-	_, err = io.CopyBuffer(dstFile, srcFile, buf)
-	return err
-}
-
-// DeleteFile delete wished file. If file not exists return nil, if
-// any error - error will be type *PathError
-func DeleteFile(file string) (err error) {
-	if _, err = os.Stat(file); err == nil {
-		return os.Remove(file)
-	}
-	if err != nil && os.IsNotExist(err) {
-		// if file not exists - no error
-		return nil
-	}
-	return err
-}
-
-// DeleteDirectory use RemoveAll under the hood
-func DeleteDirectory(dir string) (err error) {
-	return os.RemoveAll(dir)
-}
-
-// CreateDirectories use MkdirAll under the hood
-// Create entire path
-func CreateDirectories(
-	root string,
-	perm fs.FileMode,
-) (err error) {
-	return os.MkdirAll(root, perm)
-}
-
-// SyncCommandConfig for sync command parameters
-// TODO: create config and move to config
-type SyncCommandConfig struct {
-	SrcDiffPercent int
-	SrcPath        string
-	DstPath        string
-}
-
-// Sync start sync operation
-func Sync(
-	ctx context.Context,
-	cfg SyncCommandConfig,
-	log *logrus.Logger,
-) (err error) {
-	var sm, dm SyncMeta
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-		break
-	}
-
-	// make sync meta
-	if sm, dm, err = handlePaths(cfg.SrcPath, cfg.DstPath); err != nil {
-		return err
-	}
-
-	syncCmd := MakeSyncCommand(cfg.SrcDiffPercent)
-
-	// prepare meta into sync command
-	if err = syncCmd.Prepare(sm, dm); err != nil {
-		return err
-	}
-
-	gp := CalculatePoolSize()
-
-	// delete directories
-	if err = deleteDirectories(
-		ctx,
-		syncCmd.DirsToDelete,
-		gp,
-	); err != nil {
-		return err
-	}
-
-	// delete files
-	for _, files := range syncCmd.FilesToDelete {
-		if err = deleteFiles(ctx, files, gp); err != nil {
-			return err
-		}
-	}
-
-	// create directories
-	// TODO: add perm into directory context
-	if err = createDirectories(
-		ctx,
-		syncCmd.DirsToCreate,
-		os.ModeDir|0755,
-		gp,
-	); err != nil {
-		return err
-	}
-
-	// sync files
-	if err = syncFiles(ctx, log, syncCmd.SyncPairs, gp); err != nil {
-		return err
-	}
-
-	return err
-}
-
-// CalculatePoolSize for disk io bound tasks
-func CalculatePoolSize() int {
-	cc := runtime.NumCPU()
-	if cc < 2 {
-		return cc
-	}
-
-	return cc/2 + 1
-}
-
-// HandlePaths handle two paths parallel
-func handlePaths(src string, dst string) (
-	srcMeta SyncMeta,
-	dstMeta SyncMeta,
-	err error,
-) {
-	var g errgroup.Group
-
-	srcMeta = MakeSyncMeta()
-	dstMeta = MakeSyncMeta()
-
-	g.Go(
-		func() error {
-			return srcMeta.MakeMeta(src)
-		},
-	)
-
-	g.Go(
-		func() error {
-			return dstMeta.MakeMeta(dst)
-		},
-	)
-
-	err = g.Wait()
-	return srcMeta, dstMeta, err
-}
-
-// DeleteDirectories concurrently
-func deleteDirectories(
-	ctx context.Context,
-	dirs []string,
-	concurrencyLim int,
-) (err error) {
-	var g *errgroup.Group
-
-	tokens := make(chan struct{}, concurrencyLim)
-
-	for _, dir := range dirs {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-tokens:
-			g.Go(
-				func() error {
-					err = DeleteDirectory(dir)
-					tokens <- struct{}{}
-					return err
-				},
-			)
-		}
-
-		if err = g.Wait(); err != nil {
-			return err
-		}
-	}
-
-	return err
-}
-
-func deleteFiles(
-	ctx context.Context,
-	files []string,
-	concurrencyLim int,
-) (err error) {
-	var g *errgroup.Group
-
-	tokens := make(chan struct{}, concurrencyLim)
-
-	for _, file := range files {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-tokens:
-			g.Go(
-				func() error {
-					err = DeleteFile(file)
-					tokens <- struct{}{}
-					return err
-				},
-			)
-		}
-
-		if err = g.Wait(); err != nil {
-			return err
-		}
-	}
-
-	return err
-}
-
-func createDirectories(
-	ctx context.Context,
-	toCreate []string,
-	perm fs.FileMode,
-	concurrencyLim int,
-) (err error) {
-	var g *errgroup.Group
-
-	tokens := make(chan struct{}, concurrencyLim)
-
-	for _, dir := range toCreate {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-tokens:
-			g.Go(
-				func() error {
-					err = CreateDirectories(dir, perm)
-					tokens <- struct{}{}
-					return err
-				},
-			)
-		}
-
-		if err = g.Wait(); err != nil {
-			return err
-		}
-	}
-
-	return err
-}
-
-func syncFiles(
-	ctx context.Context,
-	log *logrus.Logger,
-	pairs []SyncPair,
-	concurrencyLim int,
-) (err error) {
-	var g *errgroup.Group
-
-	tokens := make(chan struct{}, concurrencyLim)
-
-	for _, pair := range pairs {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-tokens:
-			g.Go(
-				func() error {
-					err = SyncFiles(ctx, log, pair)
-					tokens <- struct{}{}
-					return err
-				},
-			)
-		}
-
-		if err = g.Wait(); err != nil {
-			return err
-		}
 	}
 
 	return err

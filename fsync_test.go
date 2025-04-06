@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/require"
 	"sort"
 	"testing"
@@ -11,7 +10,6 @@ import (
 
 func TestSyncCommand_configureSyncActions(t *testing.T) {
 	tm := time.Now()
-	log := logrus.New()
 
 	tests := []struct {
 		name         string
@@ -78,7 +76,7 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand(log, tt.diffPercent)
+				cmd := MakeSyncCommand(tt.diffPercent)
 				_ = cmd.configureSyncActions(tt.srcD, tt.dstD)
 
 				fmt.Printf("%+v, %+v\n", cmd.FilesToDelete, tt.waitToDelete)
@@ -91,7 +89,6 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 
 func TestSyncCommand_Compare(t *testing.T) {
 	tm := time.Now()
-	log := logrus.New()
 
 	tests := []struct {
 		name        string
@@ -151,7 +148,7 @@ func TestSyncCommand_Compare(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand(log, tt.diffPercent)
+				cmd := MakeSyncCommand(tt.diffPercent)
 				status, _ := cmd.CompareRoot(tt.src, tt.dest)
 
 				require.Equal(t, tt.wantStatus, status)
@@ -161,8 +158,6 @@ func TestSyncCommand_Compare(t *testing.T) {
 }
 
 func TestSyncCommand_mergeString(t *testing.T) {
-	log := logrus.New()
-
 	tests := []struct {
 		name    string
 		str     []string
@@ -177,7 +172,7 @@ func TestSyncCommand_mergeString(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand(log, 0)
+				cmd := MakeSyncCommand(0)
 				str, _ := cmd.mergePath(tt.str...)
 				require.Equal(t, tt.wantRes, str)
 			},
@@ -187,7 +182,6 @@ func TestSyncCommand_mergeString(t *testing.T) {
 
 func TestSyncCommand_configureSyncActions1(t *testing.T) {
 	tm := time.Now()
-	log := logrus.New()
 
 	tests := []struct {
 		name string
@@ -223,7 +217,7 @@ func TestSyncCommand_configureSyncActions1(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand(log, 30)
+				cmd := MakeSyncCommand(30)
 				_ = cmd.configureSyncActions(tt.src, tt.dst)
 
 				// single SyncPair have to equal to sample
@@ -235,7 +229,6 @@ func TestSyncCommand_configureSyncActions1(t *testing.T) {
 
 func TestSyncCommand_Prepare(t *testing.T) {
 	tm := time.Now()
-	log := logrus.New()
 
 	tests := []struct {
 		name string
@@ -260,7 +253,7 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "root/sync-dir",
+						NestedPath: "%-m-%/sync-dir",
 						Name:       "sync-dir",
 					},
 				},
@@ -277,7 +270,7 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "root/sync-dir",
+						NestedPath: "%-m-%/sync-dir",
 						Name:       "sync-dir",
 					},
 				},
@@ -312,7 +305,7 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "root/sync-dir",
+						NestedPath: "%-m-%/sync-dir",
 						Name:       "sync-dir",
 					},
 				},
@@ -329,7 +322,7 @@ func TestSyncCommand_Prepare(t *testing.T) {
 								ModTime: tm,
 							},
 						},
-						NestedPath: "root/sync-dir",
+						NestedPath: "%-m-%/sync-dir",
 						Name:       "sync-dir",
 					},
 				},
@@ -351,7 +344,7 @@ func TestSyncCommand_Prepare(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				cmd := MakeSyncCommand(log, 35)
+				cmd := MakeSyncCommand(35)
 				_ = cmd.Prepare(tt.src, tt.dst)
 
 				sort.Slice(
@@ -374,7 +367,6 @@ func TestSyncCommand_Prepare(t *testing.T) {
 
 func TestSyncCommand_PrepareReturnError(t *testing.T) {
 	tm := time.Now()
-	log := logrus.New()
 
 	tests := []struct {
 		name string
@@ -429,7 +421,7 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 		t.Run(
 			tt.name, func(t *testing.T) {
 				// difference in directories count is 50% - we got error
-				cmd := MakeSyncCommand(log, 30)
+				cmd := MakeSyncCommand(30)
 				err := cmd.Prepare(tt.src, tt.dst)
 
 				require.EqualError(t, err, tt.err.Error())

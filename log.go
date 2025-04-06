@@ -3,22 +3,56 @@
 package main
 
 import (
+	"fmt"
 	"github.com/sirupsen/logrus"
-	sHook "github.com/sirupsen/logrus/hooks/syslog"
-	"log/syslog"
+	"strings"
 )
 
-// SetupLogger return new logger for daemon. Read with journalctl -t fsyncd
-func SetupLogger() (log *logrus.Logger, err error) {
-	var hook *sHook.SyslogHook
+const (
+	InfoLevel  = "info"
+	DebugLevel = "debug"
+	WarnLevel  = "warn"
+	ErrorLevel = "error"
+	PanicLevel = "panic"
+	FatalLevel = "fatal"
+)
+
+var UnexpectedLevel = fmt.Errorf("unexpected level")
+
+// SetupLogger return new logger
+func SetupLogger(level string, tmFmt string) (log *logrus.Logger, err error) {
+	var lv logrus.Level
 
 	log = logrus.New()
-	hook, err = sHook.NewSyslogHook("", "", syslog.LOG_DAEMON, "fsyncd")
-	if err != nil {
-		log.Hooks.Add(hook)
-		return log, err
+
+	if lv, err = convertLogLevel(level); err != nil {
+		return nil, err
 	}
 
-	log.Error("syslog hook configuration failed")
-	return nil, err
+	log.SetLevel(lv)
+	log.SetFormatter(&logrus.JSONFormatter{TimestampFormat: tmFmt})
+
+	return log, err
+}
+
+// convertLogLevel convert log level (as a string) into logrus.Level
+func convertLogLevel(level string) (l logrus.Level, err error) {
+	level = strings.ToLower(level)
+
+	switch level {
+	case InfoLevel:
+		return logrus.InfoLevel, err
+	case WarnLevel:
+		return logrus.WarnLevel, err
+	case DebugLevel:
+		return logrus.DebugLevel, err
+	case ErrorLevel:
+		return logrus.ErrorLevel, err
+	case PanicLevel:
+		return logrus.PanicLevel, err
+	case FatalLevel:
+		return logrus.FatalLevel, err
+	default:
+		return logrus.Level(128), UnexpectedLevel
+	}
 }
