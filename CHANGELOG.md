@@ -14,6 +14,7 @@
 
 ### Features
 
+- create config, create server, update logger setup, update main func, create configuration file ([386ff90](https://github.com/Omarmeks89/fsyncd/commit/386ff901d367d7230e1329bde8d665cfc4d1797e) by Егор Марков).
 - create Sync function as a command entry point ([34bd980](https://github.com/Omarmeks89/fsyncd/commit/34bd980826fcb784bffce54f4782b9063fdf357c) by Егор Марков).
 - create BFS creation alg to create missed directories in dst ([d6c276f](https://github.com/Omarmeks89/fsyncd/commit/d6c276f71ec29d5e0d8425274834a3c685b705fb) by Егор Марков). test: fix previous tests, add new tests
 - update PrepareRootPath - add re suffix and prefix detection ([b29de56](https://github.com/Omarmeks89/fsyncd/commit/b29de569c67f26574b5be54d9039637928c6a366) by Егор Марков). test: add test for updated PrepareRootPath method
