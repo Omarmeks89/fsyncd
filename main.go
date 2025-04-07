@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// create sync operation lock (block)
-	block := new(Block)
+	block := MakeBlock()
 	if server, err = MakeServer(cfg, logger, block); err != nil {
 		logrus.WithFields(
 			logrus.Fields{

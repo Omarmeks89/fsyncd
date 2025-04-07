@@ -369,7 +369,7 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) {
 	}
 
 	sm.Dirs[dir.Mask] = dir
-	return sm.makeMeta(root, dir.Mask)
+	return sm.makeMeta(root, dir.Mask, dir.Mask)
 }
 
 // FilesCount return count of files
@@ -381,10 +381,14 @@ func (sm *SyncMeta) FilesCount() (size int) {
 }
 
 // makeMeta do all job
-func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
+func (sm *SyncMeta) makeMeta(
+	root string,
+	nestedPath string,
+	dirName string,
+) (err error) {
 	var files []os.DirEntry
 	var buf strings.Builder
-	var info os.FileInfo
+	var info, dInfo os.FileInfo
 
 	if files, err = os.ReadDir(root); err != nil {
 		return err
@@ -397,7 +401,15 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
 		buf.WriteString("/")
 		buf.WriteString(file.Name())
 
-		fPath := buf.String()
+		rootPath := buf.String()
+		buf.Reset()
+
+		buf.WriteString(nestedPath)
+		buf.WriteString("/")
+		buf.WriteString(file.Name())
+
+		dPath := buf.String()
+		buf.Reset()
 
 		if ok := file.IsDir(); !ok {
 
@@ -412,18 +424,22 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
 				Perm:    info.Mode(),
 			}
 
-			buf.Reset()
+			// buf.Reset()
 			continue
 		}
 
 		// create new nested directory
 		fCollection := make(map[string]FileMeta, DefaultSyncObjectsSize)
+		if dInfo, err = file.Info(); err != nil {
+			return err
+		}
+
 		dir := Directory{
 			Mask:       "",
 			Name:       file.Name(), // set real name to Name
-			NestedPath: fPath,
+			NestedPath: dPath,
 			Files:      fCollection,
-			Perm:       info.Mode(),
+			Perm:       dInfo.Mode(),
 		}
 
 		// save nested directories by real name because
@@ -432,11 +448,11 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) {
 		sm.Dirs[dir.Name] = dir
 
 		// is another directory - dive
-		if err = sm.makeMeta(fPath, dir.Name); err != nil {
+		if err = sm.makeMeta(rootPath, dPath, dir.Name); err != nil {
 			return err
 		}
 
-		buf.Reset()
+		// buf.Reset()
 	}
 
 	return err

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
+	"github.com/go-playground/validator/v10"
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"os/signal"
@@ -15,13 +16,21 @@ import (
 
 var BrokenServer = fmt.Errorf("broken server")
 
+// Block is used to avoid long time in mutex
 type Block struct {
 	lock   *sync.RWMutex
 	isFree bool
 }
 
-// Free return Block availability for Lock
-func (b *Block) Free() bool {
+func MakeBlock() *Block {
+	return &Block{
+		lock:   &sync.RWMutex{},
+		isFree: true,
+	}
+}
+
+// IsFree return Block availability for Lock
+func (b *Block) IsFree() bool {
 	b.lock.RLock()
 	defer b.lock.RUnlock()
 	return b.isFree
@@ -33,6 +42,7 @@ func (b *Block) Lock() bool {
 	defer b.lock.Unlock()
 
 	if !b.isFree {
+		// lock is locked - return false
 		return b.isFree
 	}
 
@@ -82,8 +92,11 @@ func MakeServer(cfg *ServerConfig, log *logrus.Logger, b *Block) (
 	}, err
 }
 
+// HandleSyncCommand handle unscheduled used command.
+// Return http status 409 if operation running
 func (srv *Server) HandleSyncCommand(c *gin.Context) {
 	var syncReq SyncDirectoriesRequest
+	var sm, dm SyncMeta
 	var err error
 
 	if srv == nil {
@@ -91,24 +104,54 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) {
 			http.StatusInternalServerError,
 			BrokenServer,
 		)
+		return
 	}
 
 	// Validate request
 	if err = c.BindJSON(&syncReq); err != nil {
 		_ = c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	vld := validator.New(validator.WithRequiredStructEnabled())
+	if err = vld.Struct(&syncReq); err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
 	}
 
 	if !srv.b.Lock() {
 		// sema is closed - return 409 (conflict)
 		c.AbortWithStatus(http.StatusConflict)
+		return
 	}
 
-	// we take a lock let`s handle command
-	// ...
+	defer func() {
+		// unlock & panic if Block is not unlocked
+		if !srv.b.Unlock() {
+			panic("unsafe to continue - broken lock")
+		}
+	}()
 
-	// unlock & panic if Block is not unlocked
-	if !srv.b.Unlock() {
-		panic("unsafe to continue - broken lock")
+	// we take a lock let`s handle command
+	if sm, dm, err = HandlePaths(syncReq.SrcPath, syncReq.DstPath); err != nil {
+		_ = c.AbortWithError(
+			http.StatusInternalServerError,
+			fmt.Errorf("invalid paths"),
+		)
+		return
+	}
+
+	syncCmd := MakeSyncCommand(syncReq.MaxDiffPercent)
+	if err = syncCmd.Prepare(sm, dm); err != nil {
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	// start sync
+	snc := MakeSynchronizer()
+	if err = snc.Sync(context.Background(), syncCmd, srv.log); err != nil {
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
+		return
 	}
 }
 

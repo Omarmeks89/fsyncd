@@ -14,19 +14,14 @@ import (
 type ItemHandler func(string) error
 
 // Synchronizer for sync command parameters
-type Synchronizer struct {
-	// wished difference percent between src and dest root directories
-	SrcDiffPercent int
+type Synchronizer struct{}
 
-	// root path to source directory
-	SrcPath string
-
-	// root path to dest directory
-	DstPath string
+func MakeSynchronizer() Synchronizer {
+	return Synchronizer{}
 }
 
 // Sync start sync operation
-func (s *Synchronizer) Sync(
+func (s Synchronizer) Sync(
 	ctx context.Context,
 	syncCmd SyncCommand,
 	log *logrus.Logger,
@@ -34,30 +29,60 @@ func (s *Synchronizer) Sync(
 	gp := s.CalculatePoolSize()
 
 	// delete directories
+	log.WithFields(
+		logrus.Fields{
+			"stage": "remove_dirs",
+			"state": "processing",
+		},
+	).Debug("deleting directories")
 	if err = s.DeleteDirectories(ctx, syncCmd, gp); err != nil {
 		return err
 	}
 
 	// delete files
+	log.WithFields(
+		logrus.Fields{
+			"stage": "remove_files",
+			"state": "processing",
+		},
+	).Debug("deleting files")
 	if err = s.DeleteFiles(ctx, syncCmd, gp); err != nil {
 		return err
 	}
 
 	// create directories
+	log.WithFields(
+		logrus.Fields{
+			"stage": "create_new_dirs",
+			"state": "processing",
+		},
+	).Debug("creating directories")
 	if err = s.CreateDirectories(ctx, syncCmd, gp); err != nil {
 		return err
 	}
 
 	// sync files
+	log.WithFields(
+		logrus.Fields{
+			"stage": "sync_files",
+			"state": "processing",
+		},
+	).Debug("sync files")
 	if err = s.SyncFiles(ctx, log, syncCmd, gp); err != nil {
 		return err
 	}
 
+	log.WithFields(
+		logrus.Fields{
+			"stage": "synchronized",
+			"state": "success",
+		},
+	).Debug("synchronization exited")
 	return err
 }
 
 // DeleteDirectories delete all wished directories from dest concurrently
-func (s *Synchronizer) DeleteDirectories(
+func (s Synchronizer) DeleteDirectories(
 	ctx context.Context,
 	syncCmd SyncCommand,
 	concurrencyLim int,
@@ -72,7 +97,7 @@ func (s *Synchronizer) DeleteDirectories(
 }
 
 // DeleteFiles delete all wished files from dest concurrently
-func (s *Synchronizer) DeleteFiles(
+func (s Synchronizer) DeleteFiles(
 	ctx context.Context,
 	syncCmd SyncCommand,
 	concurrencyLim int,
@@ -90,7 +115,7 @@ func (s *Synchronizer) DeleteFiles(
 }
 
 // CreateDirectories create all needed directories in dest concurrently
-func (s *Synchronizer) CreateDirectories(
+func (s Synchronizer) CreateDirectories(
 	ctx context.Context,
 	syncCmd SyncCommand,
 	concurrencyLim int,
@@ -103,7 +128,7 @@ func (s *Synchronizer) CreateDirectories(
 }
 
 // syncPair sync files pair
-func (s *Synchronizer) syncPair(
+func (s Synchronizer) syncPair(
 	ctx context.Context,
 	log *logrus.Logger,
 	pair SyncPair,
@@ -142,7 +167,7 @@ func (s *Synchronizer) syncPair(
 }
 
 // SyncFiles sync all pairs between source and dest
-func (s *Synchronizer) SyncFiles(
+func (s Synchronizer) SyncFiles(
 	ctx context.Context,
 	log *logrus.Logger,
 	syncCmd SyncCommand,
@@ -159,7 +184,7 @@ func (s *Synchronizer) SyncFiles(
 //
 // Returns:
 //   - err: if any error returns
-func (s *Synchronizer) deleteFile(file string) (err error) {
+func (s Synchronizer) deleteFile(file string) (err error) {
 	if _, err = os.Stat(file); err == nil {
 		return os.Remove(file)
 	}
@@ -171,13 +196,13 @@ func (s *Synchronizer) deleteFile(file string) (err error) {
 }
 
 // deleteDir use RemoveAll under the hood
-func (s *Synchronizer) deleteDir(dir string) (err error) {
+func (s Synchronizer) deleteDir(dir string) (err error) {
 	return os.RemoveAll(dir)
 }
 
 // createDirs use MkdirAll under the hood
 // Create entire path
-func (s *Synchronizer) createDirs(
+func (s Synchronizer) createDirs(
 	root string,
 	perm fs.FileMode,
 ) (err error) {
@@ -185,7 +210,7 @@ func (s *Synchronizer) createDirs(
 }
 
 // CalculatePoolSize for disk io bound tasks
-func (s *Synchronizer) CalculatePoolSize() int {
+func (s Synchronizer) CalculatePoolSize() int {
 	cc := runtime.NumCPU()
 	if cc < 2 {
 		return cc
@@ -222,15 +247,19 @@ func HandlePaths(src string, dst string) (
 }
 
 // handleItems is a concurrent runner that start goroutines pool inside
-func (s *Synchronizer) handleItems(
+func (s Synchronizer) handleItems(
 	ctx context.Context,
 	items []string,
 	concurrencyLim int,
 	handler ItemHandler,
 ) (err error) {
-	var g *errgroup.Group
+	g := errgroup.Group{}
 
 	tokens := make(chan struct{}, concurrencyLim)
+
+	for i := 0; i < concurrencyLim; i++ {
+		tokens <- struct{}{}
+	}
 
 	for _, item := range items {
 		select {
@@ -256,15 +285,19 @@ out:
 	return err
 }
 
-func (s *Synchronizer) handleFilePairs(
+func (s Synchronizer) handleFilePairs(
 	ctx context.Context,
 	log *logrus.Logger,
 	pairs []SyncPair,
 	concurrencyLim int,
 ) (err error) {
-	var g *errgroup.Group
+	g := errgroup.Group{}
 
 	tokens := make(chan struct{}, concurrencyLim)
+
+	for i := 0; i < concurrencyLim; i++ {
+		tokens <- struct{}{}
+	}
 
 	for _, pair := range pairs {
 		select {
@@ -288,14 +321,18 @@ out:
 	return err
 }
 
-func (s *Synchronizer) handleNewDirectories(
+func (s Synchronizer) handleNewDirectories(
 	ctx context.Context,
 	newDirs []NewDirectory,
 	concurrencyLim int,
 ) (err error) {
-	var g *errgroup.Group
+	var g errgroup.Group
 
 	tokens := make(chan struct{}, concurrencyLim)
+
+	for i := 0; i < concurrencyLim; i++ {
+		tokens <- struct{}{}
+	}
 
 	for _, nd := range newDirs {
 		select {
@@ -321,7 +358,7 @@ out:
 
 // fclose internal function for deferred error handling from closed files.
 // Can close readers and writers
-func (s *Synchronizer) fclose(log *logrus.Logger, file io.ReadWriteCloser) {
+func (s Synchronizer) fclose(log *logrus.Logger, file io.ReadWriteCloser) {
 	if err := file.Close(); err != nil {
 		log.Error(err)
 	}
