@@ -11,6 +11,7 @@ swagger_port: 6768
 # each path must exist
 src_path: /
 dst_path: /
+sync_time: "15:04:05"
 
 # difference percent between two directories
 # if diff is bigger than max_diff_percent, operation

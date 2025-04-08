@@ -16,35 +16,36 @@ const DefaultConfigName = "fsync.yml"
 // ServerConfig contains all required server parameters
 type ServerConfig struct {
 	// server section
-	Host string `yaml:"host" Validate:"required,ipv4"`
-	Port string `yaml:"port" Validate:"required,numeric"`
+	Host string `yaml:"host" validate:"required,ipv4"`
+	Port string `yaml:"port" validate:"required,numeric"`
 
 	// swagger section
-	SwaggerEnabled bool   `yaml:"swagger_enabled" Validate:"required"`
-	SwaggerPort    string `yaml:"swagger_port" Validate:"numeric"`
+	SwaggerEnabled bool   `yaml:"swagger_enabled" validate:"required"`
+	SwaggerPort    string `yaml:"swagger_port" validate:"numeric"`
 
 	// sync section
 	// 'dirpath' will fail if directory not exists
-	SrcPath        string `yaml:"src_path" Validate:"required,dirpath"`
-	DstPath        string `yaml:"dst_path" Validate:"required,dirpath"`
-	MaxDiffPercent int    `yaml:"max_diff_percent" Validate:"required,gt=0,lte=100"`
+	SrcPath        string `yaml:"src_path" validate:"required,dirpath"`
+	DstPath        string `yaml:"dst_path" validate:"required,dirpath"`
+	MaxDiffPercent int    `yaml:"max_diff_percent" validate:"required,gt=0,lte=100"`
+	SyncTime       string `yaml:"sync_time" validate:"required"`
 
 	// external data source
 	// ...
 
 	// connection settings
-	ConnReadTimeout         time.Duration `yaml:"conn_read_timeout" Validate:"required"`
-	ConnWriteTimeout        time.Duration `yaml:"conn_write_timeout" Validate:"required"`
-	GracefulShutdownTimeout time.Duration `yaml:"graceful_shutdown_timeout" Validate:"required"`
+	ConnReadTimeout         time.Duration `yaml:"conn_read_timeout" validate:"required"`
+	ConnWriteTimeout        time.Duration `yaml:"conn_write_timeout" validate:"required"`
+	GracefulShutdownTimeout time.Duration `yaml:"graceful_shutdown_timeout" validate:"required"`
 
 	// CORS
-	AllowedHosts   []string `yaml:"allowed_hosts" Validate:"required"`
-	AllowedMethods []string `yaml:"allowed_methods" Validate:"required"`
-	AllowedHeaders []string `yaml:"allowed_headers" Validate:"required"`
+	AllowedHosts   []string `yaml:"allowed_hosts" validate:"required"`
+	AllowedMethods []string `yaml:"allowed_methods" validate:"required"`
+	AllowedHeaders []string `yaml:"allowed_headers" validate:"required"`
 
 	// logger section
-	TimeFormat string `yaml:"time_format" Validate:"required"`
-	LogLevel   string `yaml:"log_level" Validate:"required"`
+	TimeFormat string `yaml:"time_format" validate:"required"`
+	LogLevel   string `yaml:"log_level" validate:"required"`
 
 	lock *sync.RWMutex
 }

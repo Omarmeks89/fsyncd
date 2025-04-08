@@ -3,12 +3,16 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"io"
 	"io/fs"
 	"os"
 	"runtime"
+	"strconv"
+	"strings"
+	"time"
 )
 
 type ItemHandler func(string) error
@@ -134,8 +138,6 @@ func (s Synchronizer) syncPair(
 	pair SyncPair,
 ) (err error) {
 	var srcFile, dstFile io.ReadWriteCloser
-
-	log.Debugf("%+v | %+v\n", pair.Src, pair.Dst)
 
 	// open src (take permissions from sync pair)
 	srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, pair.Perm)
@@ -364,4 +366,121 @@ func (s Synchronizer) fclose(log *logrus.Logger, file io.ReadWriteCloser) {
 	if err := file.Close(); err != nil {
 		log.Error(err)
 	}
+}
+
+// SyncByTimer infinite loop activated by timer and run sync operation.
+// If b (Block) is locked return error and wait next timer
+func SyncByTimer(
+	ctx context.Context,
+	cfg *ServerConfig,
+	b *Block,
+) (err error) {
+
+	var hrs, mns, sec int
+
+	// get local time
+	tm := time.Now().UTC()
+
+	// truncate by day
+	tx := tm.Truncate(24 * time.Hour)
+	parts := strings.Split(cfg.SyncTime, ":")
+	if len(parts) < 3 {
+		return fmt.Errorf("invalid time preset")
+	}
+
+	// handle hours
+	if hrs, err = strconv.Atoi(parts[0]); err != nil {
+		return err
+	}
+
+	if hrs < 0 || hrs > 23 {
+		return err
+	}
+
+	tx.Add(time.Duration(hrs) * time.Hour)
+
+	// handle minutes
+	if mns, err = strconv.Atoi(parts[1]); err != nil {
+		return err
+	}
+
+	if mns < 0 || mns > 59 {
+		return err
+	}
+
+	tx.Add(time.Duration(mns) * time.Minute)
+
+	// handle seconds
+	if sec, err = strconv.Atoi(parts[1]); err != nil {
+		return err
+	}
+
+	if sec < 0 || mns > 59 {
+		return err
+	}
+
+	tx.Add(time.Duration(sec) * time.Second)
+
+	if tm.After(tx) {
+		// add 24 hours for tx
+		tx.Add(24 * time.Hour)
+	}
+
+	// sub current time from wished - we got current sync interval
+	t := time.NewTimer(tx.Sub(tm))
+
+	// we may use go < 1.23, so we have to care about timers
+	defer t.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			// ...
+			return ctx.Err()
+		case <-t.C:
+			if b.Lock() {
+				// do operation
+			}
+
+			// not locked - any other sync running, let`s notify
+			// and wait next timer
+			// ...
+
+			// === time
+			// truncate by 24 h
+			// add h, m, s from preset
+			// sub time.Now() from new time -> got new interval
+
+			if ok := t.Reset(cfg.GracefulShutdownTimeout); !ok {
+				return fmt.Errorf("broken synchronization timer")
+			}
+		}
+	}
+}
+
+// SyncTimeParser for handle sync time
+type SyncTimeParser struct {
+	H time.Duration
+	M time.Duration
+	S time.Duration
+}
+
+func (stp *SyncTimeParser) Parse(tmFmt string) (err error) {
+	return err
+}
+
+func (stp *SyncTimeParser) SetHours(tm time.Time, h int) (err error) {
+	return err
+}
+
+func (stp *SyncTimeParser) SetMinutes(tm time.Time, m int) (err error) {
+	return err
+}
+
+func (stp *SyncTimeParser) SetSeconds(tm time.Time, s int) (err error) {
+	return err
+}
+
+func (stp *SyncTimeParser) GetSyncInterval(tm time.Time) time.Duration {
+	return 1 * time.Second
 }

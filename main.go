@@ -54,6 +54,13 @@ func main() {
 		},
 	)
 
+	// run synchronization by timer
+	g.Go(
+		func() error {
+			return SyncByTimer(ctx, cfg, block)
+		},
+	)
+
 	if err = g.Wait(); err != nil {
 		logrus.WithFields(
 			logrus.Fields{
