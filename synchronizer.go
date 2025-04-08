@@ -135,6 +135,8 @@ func (s Synchronizer) syncPair(
 ) (err error) {
 	var srcFile, dstFile io.ReadWriteCloser
 
+	log.Debugf("%+v | %+v\n", pair.Src, pair.Dst)
+
 	// open src (take permissions from sync pair)
 	srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, pair.Perm)
 	if err != nil {
@@ -144,7 +146,7 @@ func (s Synchronizer) syncPair(
 	defer s.fclose(log, srcFile)
 
 	// open dst (create file if not exists)
-	dstFile, err = os.OpenFile(pair.Src, os.O_CREATE|os.O_RDWR, pair.Perm)
+	dstFile, err = os.OpenFile(pair.Dst, os.O_CREATE|os.O_RDWR, pair.Perm)
 	if err != nil {
 		return err
 	}

@@ -212,12 +212,12 @@ func (s *SyncCommand) configureSyncActions(
 	var srcPath, dstPath, fPath, delKey string
 
 	for k, v := range src.Files {
-		srcPath, err = s.mergePath(s.prepareRoot(src.NestedPath), "/", k)
+		srcPath, err = MergePath(s.prepareRoot(src.NestedPath), "/", k)
 		if err != nil {
 			return err
 		}
 
-		dstPath, err = s.mergePath(s.prepareRoot(dst.NestedPath), "/", k)
+		dstPath, err = MergePath(s.prepareRoot(dst.NestedPath), "/", k)
 		if err != nil {
 			return err
 		}
@@ -249,13 +249,13 @@ func (s *SyncCommand) configureSyncActions(
 
 	for k, _ := range dst.Files {
 
-		fPath, err = s.mergePath(s.prepareRoot(dst.NestedPath), "/", k)
+		fPath, err = MergePath(s.prepareRoot(dst.NestedPath), "/", k)
 		if err != nil {
 			return err
 		}
 
 		// make del key
-		if delKey, err = s.mergePath(dst.Name, k); err != nil {
+		if delKey, err = MergePath(dst.Name, k); err != nil {
 			return err
 		}
 
@@ -273,7 +273,7 @@ func (s *SyncCommand) prepareRoot(root string) string {
 	return root
 }
 
-func (s *SyncCommand) mergePath(str ...string) (res string, err error) {
+func MergePath(str ...string) (res string, err error) {
 	var buf strings.Builder
 
 	for _, sp := range str {
@@ -387,8 +387,8 @@ func (sm *SyncMeta) makeMeta(
 	dirName string,
 ) (err error) {
 	var files []os.DirEntry
-	var buf strings.Builder
 	var info, dInfo os.FileInfo
+	var rootPath, dPath string
 
 	if files, err = os.ReadDir(root); err != nil {
 		return err
@@ -397,19 +397,6 @@ func (sm *SyncMeta) makeMeta(
 	currDir := sm.Dirs[dirName]
 
 	for _, file := range files {
-		buf.WriteString(root)
-		buf.WriteString("/")
-		buf.WriteString(file.Name())
-
-		rootPath := buf.String()
-		buf.Reset()
-
-		buf.WriteString(nestedPath)
-		buf.WriteString("/")
-		buf.WriteString(file.Name())
-
-		dPath := buf.String()
-		buf.Reset()
 
 		if ok := file.IsDir(); !ok {
 
@@ -424,8 +411,16 @@ func (sm *SyncMeta) makeMeta(
 				Perm:    info.Mode(),
 			}
 
-			// buf.Reset()
 			continue
+		}
+
+		// build required path only if we are directory
+		if rootPath, err = MergePath(root, "/", file.Name()); err != nil {
+			return err
+		}
+
+		if dPath, err = MergePath(nestedPath, "/", file.Name()); err != nil {
+			return err
 		}
 
 		// create new nested directory
@@ -451,8 +446,6 @@ func (sm *SyncMeta) makeMeta(
 		if err = sm.makeMeta(rootPath, dPath, dir.Name); err != nil {
 			return err
 		}
-
-		// buf.Reset()
 	}
 
 	return err

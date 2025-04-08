@@ -9,6 +9,7 @@
 
 ### Bug Fixes
 
+- fix bugs with goro pool, directory creation ([2a1f00e](https://github.com/Omarmeks89/fsyncd/commit/2a1f00e494d00f38f7db9544cfaaad8eb668bc67) by Егор Марков). test: fix tests, add new tests
 - fix bug with dst path shadowing (with src path) ([984d47b](https://github.com/Omarmeks89/fsyncd/commit/984d47b375712804105de44b4692542fad65636e) by Егор Марков).
 - fix Compare implementation ([b80cc6d](https://github.com/Omarmeks89/fsyncd/commit/b80cc6d96febe4253f9bc8687f9d1a29d837d4c1) by Егор Марков). test: fix broken tests
 

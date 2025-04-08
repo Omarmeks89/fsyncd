@@ -119,6 +119,7 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) {
 		return
 	}
 
+	// we pass only first query to avoid accident with inconsistent files state
 	if !srv.b.Lock() {
 		// sema is closed - return 409 (conflict)
 		c.AbortWithStatus(http.StatusConflict)
