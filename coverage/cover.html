@@ -55,13 +55,17 @@
 			<div id="nav">
 				<select id="files">
 				
-				<option value="file0">github.com/Omarmeks89/fsyncd/fsync.go (49.6%)</option>
+				<option value="file0">github.com/Omarmeks89/fsyncd/config.go (0.0%)</option>
 				
-				<option value="file1">github.com/Omarmeks89/fsyncd/log.go (0.0%)</option>
+				<option value="file1">github.com/Omarmeks89/fsyncd/fsync.go (54.3%)</option>
 				
-				<option value="file2">github.com/Omarmeks89/fsyncd/main.go (0.0%)</option>
+				<option value="file2">github.com/Omarmeks89/fsyncd/log.go (56.2%)</option>
 				
-				<option value="file3">github.com/Omarmeks89/fsyncd/serverd.go (0.0%)</option>
+				<option value="file3">github.com/Omarmeks89/fsyncd/main.go (0.0%)</option>
+				
+				<option value="file4">github.com/Omarmeks89/fsyncd/server.go (19.5%)</option>
+				
+				<option value="file5">github.com/Omarmeks89/fsyncd/synchronizer.go (11.8%)</option>
 				
 				</select>
 			</div>
@@ -75,17 +79,102 @@
 		</div>
 		<div id="content">
 		
-		<pre class="file" id="file0" style="display: none">// Module contain functions and types to sync data
+		<pre class="file" id="file0" style="display: none">// contains application server configuration
+package main
+
+import (
+        "github.com/go-playground/validator/v10"
+        "github.com/stretchr/testify/assert/yaml"
+        "io"
+        "os"
+        "sync"
+        "time"
+)
+
+// DefaultConfigName for detect config file
+const DefaultConfigName = "fsync.yml"
+
+// ServerConfig contains all required server parameters
+type ServerConfig struct {
+        // server section
+        Host string `yaml:"host" validate:"required,ipv4"`
+        Port string `yaml:"port" validate:"required,numeric"`
+
+        // swagger section
+        SwaggerEnabled bool   `yaml:"swagger_enabled" validate:"required"`
+        SwaggerPort    string `yaml:"swagger_port" validate:"numeric"`
+
+        // sync section
+        // 'dirpath' will fail if directory not exists
+        SrcPath        string `yaml:"src_path" validate:"required,dirpath"`
+        DstPath        string `yaml:"dst_path" validate:"required,dirpath"`
+        MaxDiffPercent int    `yaml:"max_diff_percent" validate:"required,gt=0,lte=100"`
+        SyncTime       string `yaml:"sync_time" validate:"required"`
+
+        // external data source
+        // ...
+
+        // connection settings
+        ConnReadTimeout         time.Duration `yaml:"conn_read_timeout" validate:"required"`
+        ConnWriteTimeout        time.Duration `yaml:"conn_write_timeout" validate:"required"`
+        GracefulShutdownTimeout time.Duration `yaml:"graceful_shutdown_timeout" validate:"required"`
+
+        // CORS
+        AllowedHosts   []string `yaml:"allowed_hosts" validate:"required"`
+        AllowedMethods []string `yaml:"allowed_methods" validate:"required"`
+        AllowedHeaders []string `yaml:"allowed_headers" validate:"required"`
+
+        // logger section
+        TimeFormat string `yaml:"time_format" validate:"required"`
+        LogLevel   string `yaml:"log_level" validate:"required"`
+
+        lock *sync.RWMutex
+}
+
+// Load parameters from config file and setup config
+func (sc *ServerConfig) Load() (err error) <span class="cov0" title="0">{
+        var file *os.File
+        var buf []byte
+
+        if file, err = os.Open(DefaultConfigName); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if buf, err = io.ReadAll(file); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if err = yaml.Unmarshal(buf, sc); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if _, err = sc.Validate(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
+}
+
+// Validate config fields and return error if validation failed
+func (sc *ServerConfig) Validate() (ok bool, err error) <span class="cov0" title="0">{
+        v := validator.New(validator.WithRequiredStructEnabled())
+        if err = v.Struct(sc); err != nil </span><span class="cov0" title="0">{
+                return ok, err
+        }</span>
+
+        <span class="cov0" title="0">return ok, err</span>
+}
+</pre>
+		
+		<pre class="file" id="file1" style="display: none">// Module contain functions and types to sync data
 // between fs
 
 package main
 
 import (
-        "context"
         "fmt"
-        "io"
+        "io/fs"
         "os"
-        "regexp"
         "strings"
         "time"
 
@@ -95,19 +184,15 @@ import (
 // DefaultBufferSize for intermediate buffer
 const DefaultBufferSize = 4096
 
+const DefaultDirAllocSize = 16
+
 // DefaultSyncObjectsSize set allocation size for nested SyncCommand collections
 const DefaultSyncObjectsSize = 16
 
-const DefaultRdPerm = 0o0644
-const DefaultWrPerm = 0o0666
-
-// literal const
-
 // DefaultRootDirMask default name for masked directories
-const DefaultRootDirMask = "root"
+const DefaultRootDirMask = "%-m-%"
 
 var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
-var PathError = fmt.Errorf("sequence like '..' not allowed for path")
 
 type SyncPair struct {
         // Src full path to source file
@@ -115,48 +200,54 @@ type SyncPair struct {
 
         // Dst full path to destination file
         Dst string
+
+        // Perm file permissions
+        Perm fs.FileMode
 }
 
+// NewDirectory is used for create new directory in dst
+type NewDirectory struct {
+        // full path for create directory
+        DirPath string
+
+        // directory permissions
+        DirMode fs.FileMode
+}
+
+// SyncCommand create all data for successful sync execution
 type SyncCommand struct {
         // max possible difference between directories
         SrcDiffPercent int
 
-        // ToDelete contain full paths for files have to be deleted
-        ToDelete []string
+        // FilesToDelete contain full paths for files have to be deleted
+        // collect in map to run parallel
+        FilesToDelete map[string][]string
 
-        // Nodes collection to create path inside dst root directory
-        ToCreatePath [][]string
+        // full paths for create directories
+        DirsToCreate []NewDirectory
+
+        // full path to dirs to delete
+        DirsToDelete []string
 
         // SyncPairs (src, dst) contain full source and destination paths
         // for synchronized objects
         SyncPairs []SyncPair
 
         log *logrus.Logger
-
-        // re expression for detect file suffix like (.[a-z]+) group
-        suffDetector *regexp.Regexp
-
-        // re expression for .. and ... head sequences
-        prefDetector *regexp.Regexp
 }
 
-func MakeSyncCommand(log *logrus.Logger, SrcDiffPercent int) SyncCommand <span class="cov8" title="1">{
-        toDel := make([]string, 0, DefaultSyncObjectsSize)
+func MakeSyncCommand(SrcDiffPercent int) SyncCommand <span class="cov8" title="1">{
+        toDel := make(map[string][]string, DefaultSyncObjectsSize)
         pairs := make([]SyncPair, 0, DefaultSyncObjectsSize)
-        paths := make([][]string, 0, DefaultSyncObjectsSize)
-
-        // set trimmer
-        sd := regexp.MustCompile("([a-zA-Zа-яА-Я_0-9\\-]+\\.[a-z]+)")
-        pd := regexp.MustCompile("^\\.{2,}.*")
+        paths := make([]NewDirectory, 0, DefaultSyncObjectsSize)
+        dirsToDel := make([]string, 0, DefaultSyncObjectsSize)
 
         return SyncCommand{
-                ToDelete:       toDel,
+                FilesToDelete:  toDel,
                 SyncPairs:      pairs,
                 SrcDiffPercent: SrcDiffPercent,
-                ToCreatePath:   paths,
-                log:            log,
-                suffDetector:   sd,
-                prefDetector:   pd,
+                DirsToCreate:   paths,
+                DirsToDelete:   dirsToDel,
         }
 }</span>
 
@@ -167,145 +258,6 @@ func (s *SyncCommand) Prepare(src SyncMeta, dst SyncMeta) (err error) <span clas
                 return fmt.Errorf("nil receiver not allowed")
         }</span>
         <span class="cov8" title="1">return s.prepare(src, dst)</span>
-}
-
-// prepare nested do all work
-func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov8" title="1">{
-        var ok bool
-        var dstDirectory Directory
-
-        // check size diff (less than x%) between src and dest directories
-        if ok, err = s.CompareRoot(&amp;src, &amp;dst); !ok </span><span class="cov8" title="1">{
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                // domain directories are different - break
-                // return signal error
-                <span class="cov8" title="1">return TooLargeDifferenceErr</span>
-        }
-
-        <span class="cov8" title="1">for dirName, directory := range src.Dirs </span><span class="cov8" title="1">{
-                if dstDirectory, ok = dst.Dirs[dirName]; !ok </span><span class="cov0" title="0">{
-
-                        if dirName == DefaultRootDirMask </span><span class="cov0" title="0">{
-                                // opposite root dir not created, we can`t continue
-                                return fmt.Errorf("no root destination directory")
-                        }</span>
-
-                        // create sync pair for files future dirs
-                        <span class="cov0" title="0">if err = s.PrepareRootPath(
-                                dst.MountPoint,
-                                directory.NestedPath,
-                        ); err != nil </span><span class="cov0" title="0">{
-                                return err
-                        }</span>
-                }
-
-                // create task for sync files
-                <span class="cov8" title="1">if err = s.configureSyncActions(directory, dstDirectory); err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-        }
-
-        <span class="cov8" title="1">return err</span>
-}
-
-// PrepareRootPath prepare path components to create directories
-// inside a dst root directory
-func (s *SyncCommand) PrepareRootPath(
-        rootPath string,
-        nestedPath string,
-) (err error) <span class="cov8" title="1">{
-        // root, a, b, c, ..., etc. directories from root/a/b/c/etc. path
-        pathChops := make([]string, 0, DefaultSyncObjectsSize)
-
-        chops := strings.Split(nestedPath, "/")
-        for _, chop := range chops </span><span class="cov8" title="1">{
-
-                if s.suffDetector.MatchString(chop) </span><span class="cov8" title="1">{
-                        continue</span>
-                }
-
-                // if path chop contain prefix like '..' (or more)
-                // return path error
-                <span class="cov8" title="1">if s.prefDetector.MatchString(chop) </span><span class="cov8" title="1">{
-                        return PathError
-                }</span>
-
-                // is better to match with re
-                // if strings.Index(chop, ".") &gt; 0 {
-                //         // it`s a file name, not a directory name with leading dot like '.dir'
-                //         // skip
-                //         continue
-                // }
-
-                // if we got 'root' token - replace on real root path
-                <span class="cov8" title="1">chop = strings.Replace(chop, DefaultRootDirMask, rootPath, 1)
-                pathChops = append(pathChops, chop)</span>
-        }
-
-        <span class="cov8" title="1">s.ToCreatePath = append(s.ToCreatePath, pathChops)
-        return err</span>
-}
-
-// configureSyncActions generate tasks to sync and tasks to delete
-func (s *SyncCommand) configureSyncActions(
-        src Directory,
-        dst Directory,
-) (err error) <span class="cov8" title="1">{
-        var srcPath, dstPath, fPath string
-
-        for k, v := range src.Files </span><span class="cov8" title="1">{
-                srcPath, err = s.mergePath(s.prepareRoot(src.NestedPath), "/", k)
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                <span class="cov8" title="1">dstPath, err = s.mergePath(s.prepareRoot(dst.NestedPath), "/", k)
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                <span class="cov8" title="1">syncPair := SyncPair{
-                        Src: srcPath,
-                        Dst: dstPath,
-                }
-
-                // if file by key not exists we will handle empty time value
-                if v.ModTime.Before(dst.Files[k].ModTime) </span><span class="cov8" title="1">{
-                        // rotate roots if file in destination directory
-                        // have newer version (latest modification time) than
-                        // file in master directory
-                        syncPair.Src, syncPair.Dst = syncPair.Dst, syncPair.Src
-                }</span>
-
-                <span class="cov8" title="1">if _, ok := dst.Files[k]; ok </span><span class="cov8" title="1">{
-                        delete(dst.Files, k)
-                }</span>
-
-                <span class="cov8" title="1">s.SyncPairs = append(s.SyncPairs, syncPair)</span>
-        }
-
-        <span class="cov8" title="1">for k, _ := range dst.Files </span><span class="cov8" title="1">{
-
-                fPath, err = s.mergePath(s.prepareRoot(dst.NestedPath), "/", k)
-                if err != nil </span><span class="cov0" title="0">{
-                        return err
-                }</span>
-
-                // add full path to destination file
-                <span class="cov8" title="1">s.ToDelete = append(s.ToDelete, fPath)</span>
-        }
-
-        <span class="cov8" title="1">return nil</span>
-}
-
-func (s *SyncCommand) prepareRoot(root string) string <span class="cov8" title="1">{
-        if root == "" </span><span class="cov8" title="1">{
-                return "."
-        }</span>
-        <span class="cov8" title="1">return root</span>
 }
 
 // CompareRoot src and dest directory
@@ -334,7 +286,162 @@ func (s *SyncCommand) CompareRoot(src Sized, dest Sized) (
         return percent &lt; s.SrcDiffPercent, err</span>
 }
 
-func (s *SyncCommand) mergePath(str ...string) (res string, err error) <span class="cov8" title="1">{
+// prepare nested do all work
+func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) <span class="cov8" title="1">{
+        var ok bool
+        var dstDirectory Directory
+
+        // check size diff (less than x%) between src and dest directories
+        if ok, err = s.CompareRoot(&amp;src, &amp;dst); !ok </span><span class="cov8" title="1">{
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                // domain directories are different - break
+                // return signal error
+                <span class="cov8" title="1">return TooLargeDifferenceErr</span>
+        }
+
+        <span class="cov8" title="1">for dirName, directory := range src.Dirs </span><span class="cov8" title="1">{
+
+                // overwrite nested path as a full path to directory
+                srcFullPath := s.replaceRootMask(
+                        directory.NestedPath,
+                        src.MountPoint,
+                )
+
+                dstFullPath := s.replaceRootMask(
+                        directory.NestedPath,
+                        dst.MountPoint,
+                )
+
+                // directory not found in dst directory - we have
+                // to make task to create this directory in dst
+                if dstDirectory, ok = dst.Dirs[dirName]; !ok </span><span class="cov0" title="0">{
+
+                        if dirName == DefaultRootDirMask </span><span class="cov0" title="0">{
+                                // dst root dir not created, we can`t continue
+                                return fmt.Errorf("no root destination directory")
+                        }</span>
+
+                        <span class="cov0" title="0">newDir := NewDirectory{
+                                DirPath: dstFullPath,
+                                DirMode: directory.Perm,
+                        }
+                        s.DirsToCreate = append(s.DirsToCreate, newDir)</span>
+                }
+
+                <span class="cov8" title="1">directory.NestedPath = srcFullPath
+                dstDirectory.NestedPath = dstFullPath
+
+                // set name (if not set - directory not exists) to
+                // group files for delete (if exists)
+                if dstDirectory.Name == "" </span><span class="cov0" title="0">{
+                        dstDirectory.Name = directory.Name
+                }</span>
+
+                // create task for sync files
+                <span class="cov8" title="1">if err = s.configureSyncActions(directory, dstDirectory); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+        }
+
+        // add directories (that not exists in src) to delete
+        <span class="cov8" title="1">for dirname, dstDir := range dst.Dirs </span><span class="cov8" title="1">{
+
+                if _, ok = src.Dirs[dirname]; !ok </span><span class="cov0" title="0">{
+                        // directory not exists in source - delete
+                        dstFullPath := s.replaceRootMask(
+                                dstDir.NestedPath,
+                                dst.MountPoint,
+                        )
+
+                        s.DirsToDelete = append(s.DirsToDelete, dstFullPath)
+                }</span>
+        }
+
+        <span class="cov8" title="1">return err</span>
+}
+
+// replaceRootMask will replace 'root' mask with exact root path. If
+// no 'root' mask found in string - return nestedPath
+func (s *SyncCommand) replaceRootMask(
+        nestedPath string,
+        rootPath string,
+) string <span class="cov8" title="1">{
+        return strings.Replace(nestedPath, DefaultRootDirMask, rootPath, 1)
+}</span>
+
+// configureSyncActions generate tasks to sync and tasks to delete
+func (s *SyncCommand) configureSyncActions(
+        src Directory,
+        dst Directory,
+) (err error) <span class="cov8" title="1">{
+        var srcPath, dstPath, fPath, delKey string
+
+        for k, v := range src.Files </span><span class="cov8" title="1">{
+                srcPath, err = MergePath(s.prepareRoot(src.NestedPath), "/", k)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">dstPath, err = MergePath(s.prepareRoot(dst.NestedPath), "/", k)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov8" title="1">syncPair := SyncPair{
+                        Src: srcPath,
+                        Dst: dstPath,
+                        // dest inherit file permissions from source
+                        Perm: v.Perm,
+                }
+
+                // if file by key not exists we will handle empty time value
+                if v.ModTime.Before(dst.Files[k].ModTime) </span><span class="cov8" title="1">{
+                        // rotate roots if file in destination directory
+                        // have newer version (latest modification time) than
+                        // file in master directory
+                        syncPair.Src, syncPair.Dst = syncPair.Dst, syncPair.Src
+
+                        // update permissions for source file
+                        syncPair.Perm = dst.Files[k].Perm
+                }</span>
+
+                <span class="cov8" title="1">if _, ok := dst.Files[k]; ok </span><span class="cov8" title="1">{
+                        delete(dst.Files, k)
+                }</span>
+
+                <span class="cov8" title="1">s.SyncPairs = append(s.SyncPairs, syncPair)</span>
+        }
+
+        <span class="cov8" title="1">for k, _ := range dst.Files </span><span class="cov8" title="1">{
+
+                fPath, err = MergePath(s.prepareRoot(dst.NestedPath), "/", k)
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                // make del key
+                <span class="cov8" title="1">if delKey, err = MergePath(dst.Name, k); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                // add full path to destination
+                <span class="cov8" title="1">s.FilesToDelete[delKey] = append(s.FilesToDelete[delKey], fPath)</span>
+        }
+
+        <span class="cov8" title="1">return nil</span>
+}
+
+func (s *SyncCommand) prepareRoot(root string) string <span class="cov8" title="1">{
+        if root == "" </span><span class="cov8" title="1">{
+                return "."
+        }</span>
+        <span class="cov8" title="1">return root</span>
+}
+
+func MergePath(str ...string) (res string, err error) <span class="cov8" title="1">{
         var buf strings.Builder
 
         for _, sp := range str </span><span class="cov8" title="1">{
@@ -365,6 +472,9 @@ type Directory struct {
 
         // current directory real name
         Name string
+
+        // permissions
+        Perm fs.FileMode
 }
 
 func (dir *Directory) FilesCount() int <span class="cov8" title="1">{
@@ -375,6 +485,9 @@ func (dir *Directory) FilesCount() int <span class="cov8" title="1">{
 type FileMeta struct {
         // ModTime contain last modification time
         ModTime time.Time
+
+        // Perm file permissions
+        Perm fs.FileMode
 }
 
 // SyncMeta collect meta information about synchronized
@@ -386,8 +499,6 @@ type SyncMeta struct {
         // MountPoint is equal to root path
         MountPoint string
 }
-
-const DefaultDirAllocSize = 16
 
 // MakeSyncMeta factory function return new SyncMeta object
 func MakeSyncMeta() SyncMeta <span class="cov0" title="0">{
@@ -422,17 +533,30 @@ func (sm *SyncMeta) MakeMeta(root string) (err error) <span class="cov0" title="
                 Name:       info.Name(), // set real name to Name
                 NestedPath: root,
                 Files:      files,
+                Perm:       info.Mode(),
         }
 
         sm.Dirs[dir.Mask] = dir
-        return sm.makeMeta(root, dir.Mask)</span>
+        return sm.makeMeta(root, dir.Mask, dir.Mask)</span>
+}
+
+// FilesCount return count of files
+func (sm *SyncMeta) FilesCount() (size int) <span class="cov8" title="1">{
+        for _, directory := range sm.Dirs </span><span class="cov8" title="1">{
+                size += directory.FilesCount()
+        }</span>
+        <span class="cov8" title="1">return size</span>
 }
 
 // makeMeta do all job
-func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) <span class="cov0" title="0">{
+func (sm *SyncMeta) makeMeta(
+        root string,
+        nestedPath string,
+        dirName string,
+) (err error) <span class="cov0" title="0">{
         var files []os.DirEntry
-        var buf strings.Builder
-        var info os.FileInfo
+        var info, dInfo os.FileInfo
+        var rootPath, dPath string
 
         if files, err = os.ReadDir(root); err != nil </span><span class="cov0" title="0">{
                 return err
@@ -441,13 +565,6 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) <span clas
         <span class="cov0" title="0">currDir := sm.Dirs[dirName]
 
         for _, file := range files </span><span class="cov0" title="0">{
-                buf.WriteString(root)
-                buf.WriteString("/")
-                buf.WriteString(file.Name())
-
-                fPath := buf.String()
-
-                fmt.Printf("%s, %s, %s\n", fPath, root, file.Name())
 
                 if ok := file.IsDir(); !ok </span><span class="cov0" title="0">{
 
@@ -459,17 +576,33 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) <span clas
                         // save by filename (not by full path)
                         <span class="cov0" title="0">currDir.Files[info.Name()] = FileMeta{
                                 ModTime: info.ModTime(),
+                                Perm:    info.Mode(),
                         }
+
                         continue</span>
                 }
 
+                // build required path only if we are directory
+                <span class="cov0" title="0">if rootPath, err = MergePath(root, "/", file.Name()); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov0" title="0">if dPath, err = MergePath(nestedPath, "/", file.Name()); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
                 // create new nested directory
                 <span class="cov0" title="0">fCollection := make(map[string]FileMeta, DefaultSyncObjectsSize)
-                dir := Directory{
+                if dInfo, err = file.Info(); err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+
+                <span class="cov0" title="0">dir := Directory{
                         Mask:       "",
                         Name:       file.Name(), // set real name to Name
-                        NestedPath: fPath,
+                        NestedPath: dPath,
                         Files:      fCollection,
+                        Perm:       dInfo.Mode(),
                 }
 
                 // save nested directories by real name because
@@ -478,51 +611,542 @@ func (sm *SyncMeta) makeMeta(root string, dirName string) (err error) <span clas
                 sm.Dirs[dir.Name] = dir
 
                 // is another directory - dive
-                if err = sm.makeMeta(fPath, dir.Name); err != nil </span><span class="cov0" title="0">{
+                if err = sm.makeMeta(rootPath, dPath, dir.Name); err != nil </span><span class="cov0" title="0">{
                         return err
                 }</span>
-
-                <span class="cov0" title="0">buf.Reset()</span>
         }
 
         <span class="cov0" title="0">return err</span>
 }
+</pre>
+		
+		<pre class="file" id="file2" style="display: none">// contain logger presets for daemon
 
-// FilesCount return count of files
-func (sm *SyncMeta) FilesCount() (size int) <span class="cov8" title="1">{
-        for _, directory := range sm.Dirs </span><span class="cov8" title="1">{
-                size += directory.FilesCount()
+package main
+
+import (
+        "fmt"
+        "github.com/sirupsen/logrus"
+        "strings"
+)
+
+const (
+        InfoLevel  = "info"
+        DebugLevel = "debug"
+        WarnLevel  = "warn"
+        ErrorLevel = "error"
+        PanicLevel = "panic"
+        FatalLevel = "fatal"
+)
+
+var UnexpectedLevel = fmt.Errorf("unexpected level")
+
+// SetupLogger return new logger
+func SetupLogger(level string, tmFmt string) (log *logrus.Logger, err error) <span class="cov0" title="0">{
+        var lv logrus.Level
+
+        log = logrus.New()
+
+        if lv, err = convertLogLevel(level); err != nil </span><span class="cov0" title="0">{
+                return nil, err
         }</span>
-        <span class="cov8" title="1">return size</span>
+
+        <span class="cov0" title="0">log.SetLevel(lv)
+        log.SetFormatter(&amp;logrus.JSONFormatter{TimestampFormat: tmFmt})
+
+        return log, err</span>
 }
 
-// fclose internal function for deferred error handling from closed files.
-// Can close readers and writers
-func fclose(log *logrus.Logger, file io.ReadWriteCloser) <span class="cov0" title="0">{
-        if err := file.Close(); err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
+// convertLogLevel convert log level (as a string) into logrus.Level
+func convertLogLevel(level string) (l logrus.Level, err error) <span class="cov8" title="1">{
+        level = strings.ToLower(level)
+
+        switch level </span>{
+        case InfoLevel:<span class="cov8" title="1">
+                return logrus.InfoLevel, err</span>
+        case WarnLevel:<span class="cov8" title="1">
+                return logrus.WarnLevel, err</span>
+        case DebugLevel:<span class="cov8" title="1">
+                return logrus.DebugLevel, err</span>
+        case ErrorLevel:<span class="cov8" title="1">
+                return logrus.ErrorLevel, err</span>
+        case PanicLevel:<span class="cov8" title="1">
+                return logrus.PanicLevel, err</span>
+        case FatalLevel:<span class="cov8" title="1">
+                return logrus.FatalLevel, err</span>
+        default:<span class="cov8" title="1">
+                return logrus.Level(128), UnexpectedLevel</span>
+        }
+}
+</pre>
+		
+		<pre class="file" id="file3" style="display: none">package main
+
+import (
+        "context"
+        "github.com/sirupsen/logrus"
+        "golang.org/x/sync/errgroup"
+)
+
+func main() <span class="cov0" title="0">{
+        var cfg = new(ServerConfig)
+        var logger *logrus.Logger
+        var err error
+        var server *Server
+        var g errgroup.Group
+
+        if err = cfg.Load(); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "load_config",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+
+        <span class="cov0" title="0">if logger, err = SetupLogger(cfg.LogLevel, cfg.TimeFormat); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "setup_logger",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+
+        // create sync operation lock (block)
+        <span class="cov0" title="0">block := MakeBlock()
+        if server, err = MakeServer(cfg, logger, block); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "setup_server",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+
+        <span class="cov0" title="0">ctx, cancel := context.WithCancel(context.Background())
+        defer cancel()
+
+        g.Go(
+                func() error </span><span class="cov0" title="0">{
+                        return server.Run(ctx)
+                }</span>,
+        )
+
+        // run synchronization by timer
+        <span class="cov0" title="0">g.Go(
+                func() error </span><span class="cov0" title="0">{
+                        return SyncByTimer(ctx, cfg, block)
+                }</span>,
+        )
+
+        <span class="cov0" title="0">if err = g.Wait(); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "run_server",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+}
+</pre>
+		
+		<pre class="file" id="file4" style="display: none">// server contains API commands available for user
+package main
+
+import (
+        "context"
+        "errors"
+        "fmt"
+        "github.com/gin-gonic/gin"
+        "github.com/go-playground/validator/v10"
+        "github.com/sirupsen/logrus"
+        "net/http"
+        "os/signal"
+        "sync"
+        "syscall"
+)
+
+var BrokenServer = fmt.Errorf("broken server")
+
+// Block is used to avoid long time in mutex
+type Block struct {
+        lock   *sync.RWMutex
+        isFree bool
+}
+
+func MakeBlock() *Block <span class="cov8" title="1">{
+        return &amp;Block{
+                lock:   &amp;sync.RWMutex{},
+                isFree: true,
+        }
+}</span>
+
+// IsFree return Block availability for Lock
+func (b *Block) IsFree() bool <span class="cov8" title="1">{
+        b.lock.RLock()
+        defer b.lock.RUnlock()
+        return b.isFree
+}</span>
+
+// Lock try to lock. Return false if Block locked
+func (b *Block) Lock() bool <span class="cov8" title="1">{
+        b.lock.Lock()
+        defer b.lock.Unlock()
+
+        if !b.isFree </span><span class="cov8" title="1">{
+                // lock is locked - return false
+                return b.isFree
+        }</span>
+
+        <span class="cov8" title="1">b.isFree = false
+        return true</span>
+}
+
+// Unlock try to unlock Block. Return true if Block unlocked
+func (b *Block) Unlock() bool <span class="cov8" title="1">{
+        b.lock.Lock()
+        defer b.lock.Unlock()
+
+        if b.isFree </span><span class="cov0" title="0">{
+                return b.isFree
+        }</span>
+
+        <span class="cov8" title="1">b.isFree = true
+        return b.isFree</span>
+}
+
+// Server used for handle API
+type Server struct {
+        g   *gin.Engine
+        b   *Block
+        log *logrus.Logger
+        cfg *ServerConfig
+}
+
+// MakeServer factory function for create new server to handle API
+func MakeServer(cfg *ServerConfig, log *logrus.Logger, b *Block) (
+        s *Server,
+        err error,
+) <span class="cov0" title="0">{
+        if cfg == nil || log == nil || b == nil </span><span class="cov0" title="0">{
+                return s, fmt.Errorf(
+                        "nil configuration attr: c=%p, l=%p, b=%p",
+                        cfg,
+                        log,
+                        b,
+                )
+        }</span>
+
+        <span class="cov0" title="0">return &amp;Server{
+                b:   b,
+                log: log,
+                cfg: cfg,
+        }, err</span>
+}
+
+// HandleSyncCommand handle unscheduled used command.
+// Return http status 409 if operation running
+func (srv *Server) HandleSyncCommand(c *gin.Context) <span class="cov0" title="0">{
+        var syncReq SyncDirectoriesRequest
+        var sm, dm SyncMeta
+        var err error
+
+        if srv == nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(
+                        http.StatusInternalServerError,
+                        BrokenServer,
+                )
+                return
+        }</span>
+
+        // Validate request
+        <span class="cov0" title="0">if err = c.BindJSON(&amp;syncReq); err != nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(http.StatusBadRequest, err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">vld := validator.New(validator.WithRequiredStructEnabled())
+        if err = vld.Struct(&amp;syncReq); err != nil </span><span class="cov0" title="0">{
+                c.AbortWithStatus(http.StatusBadRequest)
+                return
+        }</span>
+
+        // we pass only first query to avoid accident with inconsistent files state
+        <span class="cov0" title="0">if !srv.b.Lock() </span><span class="cov0" title="0">{
+                // sema is closed - return 409 (conflict)
+                c.AbortWithStatus(http.StatusConflict)
+                return
+        }</span>
+
+        <span class="cov0" title="0">defer func() </span><span class="cov0" title="0">{
+                // unlock &amp; panic if Block is not unlocked
+                if !srv.b.Unlock() </span><span class="cov0" title="0">{
+                        panic("unsafe to continue - broken lock")</span>
+                }
+        }()
+
+        // we take a lock let`s handle command
+        <span class="cov0" title="0">if sm, dm, err = HandlePaths(syncReq.SrcPath, syncReq.DstPath); err != nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(
+                        http.StatusInternalServerError,
+                        fmt.Errorf("invalid paths"),
+                )
+                return
+        }</span>
+
+        <span class="cov0" title="0">syncCmd := MakeSyncCommand(syncReq.MaxDiffPercent)
+        if err = syncCmd.Prepare(sm, dm); err != nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(http.StatusInternalServerError, err)
+                return
+        }</span>
+
+        // start sync
+        <span class="cov0" title="0">snc := MakeSynchronizer()
+        if err = snc.Sync(context.Background(), syncCmd, srv.log); err != nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(http.StatusInternalServerError, err)
+                return
         }</span>
 }
 
-// Sync files pair
-func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) <span class="cov0" title="0">{
+// UpdateConfiguration command for update server sync configuration
+func (srv *Server) UpdateConfiguration(c *gin.Context) <span class="cov0" title="0">{
+        c.IndentedJSON(http.StatusOK, 200)
+}</span>
+
+func (srv *Server) GetCurrentConfig(c *gin.Context) <span class="cov0" title="0">{
+        c.IndentedJSON(http.StatusOK, 200)
+}</span>
+
+// Run server
+func (srv *Server) Run(ctx context.Context) (err error) <span class="cov0" title="0">{
+        if srv == nil </span><span class="cov0" title="0">{
+                return BrokenServer
+        }</span>
+
+        <span class="cov0" title="0">sCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+        defer stop()
+
+        // setup gin router
+        if err = srv.setup(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">addr := fmt.Sprintf("%s:%s", srv.cfg.Host, srv.cfg.Port)
+        server := &amp;http.Server{
+                Addr:         addr,
+                Handler:      srv.g,
+                ReadTimeout:  srv.cfg.ConnReadTimeout,
+                WriteTimeout: srv.cfg.ConnWriteTimeout,
+        }
+
+        go func() </span><span class="cov0" title="0">{
+                if err = server.ListenAndServe(); err != nil &amp;&amp; !errors.Is(
+                        err,
+                        http.ErrServerClosed,
+                ) </span><span class="cov0" title="0">{
+                        srv.log.Error(err)
+                }</span>
+        }()
+
+        <span class="cov0" title="0">&lt;-sCtx.Done()
+        stop()
+
+        srv.log.Debugf("shutting down gracefully, press Ctrl + C to force")
+
+        nc, cancel := context.WithTimeout(
+                context.Background(),
+                srv.cfg.GracefulShutdownTimeout,
+        )
+        defer cancel()
+
+        if err = server.Shutdown(nc); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">srv.log.Debugf("server exiting")
+        return err</span>
+}
+
+func (srv *Server) setup() (err error) <span class="cov0" title="0">{
+        // set loglevel for gin
+        gin.SetMode(gin.DebugMode)
+
+        srv.g = gin.Default()
+
+        // register sync handler
+        srv.g.PATCH("/api/v1/sync/directories", srv.HandleSyncCommand)
+
+        // register handler for update server config
+        srv.g.PATCH("/api/v1/server/config/update", srv.UpdateConfiguration)
+
+        // register handler for return actual server config
+        srv.g.GET("/api/v1/server/config", srv.GetCurrentConfig)
+
+        return err
+}</span>
+</pre>
+		
+		<pre class="file" id="file5" style="display: none">// Contains Synchronizer type for handle SyncCommand
+package main
+
+import (
+        "context"
+        "fmt"
+        "github.com/sirupsen/logrus"
+        "golang.org/x/sync/errgroup"
+        "io"
+        "io/fs"
+        "os"
+        "runtime"
+        "strconv"
+        "strings"
+        "time"
+)
+
+type ItemHandler func(string) error
+
+// Synchronizer for sync command parameters
+type Synchronizer struct{}
+
+func MakeSynchronizer() Synchronizer <span class="cov0" title="0">{
+        return Synchronizer{}
+}</span>
+
+// Sync start sync operation
+func (s Synchronizer) Sync(
+        ctx context.Context,
+        syncCmd SyncCommand,
+        log *logrus.Logger,
+) (err error) <span class="cov0" title="0">{
+        gp := s.CalculatePoolSize()
+
+        // delete directories
+        log.WithFields(
+                logrus.Fields{
+                        "stage": "remove_dirs",
+                        "state": "processing",
+                },
+        ).Debug("deleting directories")
+        if err = s.DeleteDirectories(ctx, syncCmd, gp); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // delete files
+        <span class="cov0" title="0">log.WithFields(
+                logrus.Fields{
+                        "stage": "remove_files",
+                        "state": "processing",
+                },
+        ).Debug("deleting files")
+        if err = s.DeleteFiles(ctx, syncCmd, gp); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // create directories
+        <span class="cov0" title="0">log.WithFields(
+                logrus.Fields{
+                        "stage": "create_new_dirs",
+                        "state": "processing",
+                },
+        ).Debug("creating directories")
+        if err = s.CreateDirectories(ctx, syncCmd, gp); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // sync files
+        <span class="cov0" title="0">log.WithFields(
+                logrus.Fields{
+                        "stage": "sync_files",
+                        "state": "processing",
+                },
+        ).Debug("sync files")
+        if err = s.SyncFiles(ctx, log, syncCmd, gp); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">log.WithFields(
+                logrus.Fields{
+                        "stage": "synchronized",
+                        "state": "success",
+                },
+        ).Debug("synchronization exited")
+        return err</span>
+}
+
+// DeleteDirectories delete all wished directories from dest concurrently
+func (s Synchronizer) DeleteDirectories(
+        ctx context.Context,
+        syncCmd SyncCommand,
+        concurrencyLim int,
+) (err error) <span class="cov0" title="0">{
+        deleteDir := func(str string) error </span><span class="cov0" title="0">{ return s.deleteDir(str) }</span>
+        <span class="cov0" title="0">return s.handleItems(
+                ctx,
+                syncCmd.DirsToDelete,
+                concurrencyLim,
+                deleteDir,
+        )</span>
+}
+
+// DeleteFiles delete all wished files from dest concurrently
+func (s Synchronizer) DeleteFiles(
+        ctx context.Context,
+        syncCmd SyncCommand,
+        concurrencyLim int,
+) (err error) <span class="cov0" title="0">{
+        for _, files := range syncCmd.FilesToDelete </span><span class="cov0" title="0">{
+                funcCall := func(str string) error </span><span class="cov0" title="0">{ return s.deleteFile(str) }</span>
+                <span class="cov0" title="0">err = s.handleItems(
+                        ctx, files, concurrencyLim, funcCall,
+                )
+                if err != nil </span><span class="cov0" title="0">{
+                        return err
+                }</span>
+        }
+        <span class="cov0" title="0">return err</span>
+}
+
+// CreateDirectories create all needed directories in dest concurrently
+func (s Synchronizer) CreateDirectories(
+        ctx context.Context,
+        syncCmd SyncCommand,
+        concurrencyLim int,
+) (err error) <span class="cov0" title="0">{
+        return s.handleNewDirectories(
+                ctx,
+                syncCmd.DirsToCreate,
+                concurrencyLim,
+        )
+}</span>
+
+// syncPair sync files pair
+func (s Synchronizer) syncPair(
+        ctx context.Context,
+        log *logrus.Logger,
+        pair SyncPair,
+) (err error) <span class="cov0" title="0">{
         var srcFile, dstFile io.ReadWriteCloser
 
-        // open src
-        srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, DefaultRdPerm)
+        // open src (take permissions from sync pair)
+        srcFile, err = os.OpenFile(pair.Src, os.O_RDONLY, pair.Perm)
         if err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
 
-        <span class="cov0" title="0">defer fclose(log, srcFile)
+        <span class="cov0" title="0">defer s.fclose(log, srcFile)
 
         // open dst (create file if not exists)
-        dstFile, err = os.OpenFile(pair.Src, os.O_CREATE|os.O_RDWR, DefaultWrPerm)
+        dstFile, err = os.OpenFile(pair.Dst, os.O_CREATE|os.O_RDWR, pair.Perm)
         if err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
 
-        <span class="cov0" title="0">defer fclose(log, dstFile)
+        <span class="cov0" title="0">defer s.fclose(log, dstFile)
 
         // handle ctx or signal (graceful shutdown)
         // later we can`t stop operation - it may break file...
@@ -538,101 +1162,406 @@ func Sync(ctx context.Context, log *logrus.Logger, pair SyncPair) (err error) <s
         _, err = io.CopyBuffer(dstFile, srcFile, buf)
         return err</span>
 }
-</pre>
-		
-		<pre class="file" id="file1" style="display: none">// contain logger presets for daemon
 
-package main
-
-import (
-        "github.com/sirupsen/logrus"
-        sHook "github.com/sirupsen/logrus/hooks/syslog"
-        "log/syslog"
-)
-
-// SetupLogger return new logger for daemon. Read with journalctl -t fsyncd
-func SetupLogger() (log *logrus.Logger, err error) <span class="cov0" title="0">{
-        var hook *sHook.SyslogHook
-
-        log = logrus.New()
-        hook, err = sHook.NewSyslogHook("", "", syslog.LOG_DAEMON, "fsyncd")
-        if err != nil </span><span class="cov0" title="0">{
-                log.Hooks.Add(hook)
-                return log, err
-        }</span>
-
-        <span class="cov0" title="0">log.Error("syslog hook configuration failed")
-        return nil, err</span>
-}
-</pre>
-		
-		<pre class="file" id="file2" style="display: none">package main
-
-import (
-        "log"
-)
-
-func main() <span class="cov0" title="0">{
-        sm := MakeSyncMeta()
-        if err := sm.MakeMeta("a"); err != nil </span><span class="cov0" title="0">{
-                log.Fatal(err)
-        }</span>
-}
-</pre>
-		
-		<pre class="file" id="file3" style="display: none">// contain types and functions to work with unix socket
-
-package main
-
-import (
-        "context"
-        "github.com/sirupsen/logrus"
-        "net"
-        "time"
-)
-
-const UnixSocketNet = "unix"
-
-const DefaultUnixSockTimeout = 10 * time.Second
-
-func sockclose(log *logrus.Logger, sock net.Listener) <span class="cov0" title="0">{
-        err := sock.Close()
-        if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
-        }</span>
-}
-
-// HandleCommands from fsyncdctl
-func HandleCommands(
+// SyncFiles sync all pairs between source and dest
+func (s Synchronizer) SyncFiles(
         ctx context.Context,
         log *logrus.Logger,
-        sockPath string,
-) error <span class="cov0" title="0">{
-        // create server unix socket
-        servCfg := net.ListenConfig{
-                KeepAlive: DefaultUnixSockTimeout, // set timeout for ctl connection
-        }
+        syncCmd SyncCommand,
+        concurrencyLim int,
+) (err error) <span class="cov0" title="0">{
+        return s.handleFilePairs(ctx, log, syncCmd.SyncPairs, concurrencyLim)
+}</span>
 
-        sock, err := servCfg.Listen(ctx, UnixSocketNet, sockPath)
-        if err != nil </span><span class="cov0" title="0">{
-                log.Error(err)
+// deleteFile delete wished file. If file not exists return nil, if
+// any error - error will be type *PathError
+//
+// Params:
+//   - file: entire file path to delete
+//
+// Returns:
+//   - err: if any error returns
+func (s Synchronizer) deleteFile(file string) (err error) <span class="cov0" title="0">{
+        if _, err = os.Stat(file); err == nil </span><span class="cov0" title="0">{
+                return os.Remove(file)
+        }</span>
+        <span class="cov0" title="0">if err != nil &amp;&amp; os.IsNotExist(err) </span><span class="cov0" title="0">{
+                // if file not exists - no error
+                return nil
+        }</span>
+        <span class="cov0" title="0">return err</span>
+}
+
+// deleteDir use RemoveAll under the hood
+func (s Synchronizer) deleteDir(dir string) (err error) <span class="cov0" title="0">{
+        return os.RemoveAll(dir)
+}</span>
+
+// createDirs use MkdirAll under the hood
+// Create entire path
+func (s Synchronizer) createDirs(
+        root string,
+        perm fs.FileMode,
+) (err error) <span class="cov0" title="0">{
+        return os.MkdirAll(root, perm)
+}</span>
+
+// CalculatePoolSize for disk io bound tasks
+func (s Synchronizer) CalculatePoolSize() int <span class="cov0" title="0">{
+        cc := runtime.NumCPU()
+        if cc &lt; 2 </span><span class="cov0" title="0">{
+                return cc
         }</span>
 
-        <span class="cov0" title="0">defer sockclose(log, sock)
+        <span class="cov0" title="0">return cc/2 + 1</span>
+}
 
-        // handle commands
+// HandlePaths handle two paths parallel
+func HandlePaths(src string, dst string) (
+        srcMeta SyncMeta,
+        dstMeta SyncMeta,
+        err error,
+) <span class="cov0" title="0">{
+        var g errgroup.Group
+
+        srcMeta = MakeSyncMeta()
+        dstMeta = MakeSyncMeta()
+
+        g.Go(
+                func() error </span><span class="cov0" title="0">{
+                        return srcMeta.MakeMeta(src)
+                }</span>,
+        )
+
+        <span class="cov0" title="0">g.Go(
+                func() error </span><span class="cov0" title="0">{
+                        return dstMeta.MakeMeta(dst)
+                }</span>,
+        )
+
+        <span class="cov0" title="0">err = g.Wait()
+        return srcMeta, dstMeta, err</span>
+}
+
+// handleItems is a concurrent runner that start goroutines pool inside
+func (s Synchronizer) handleItems(
+        ctx context.Context,
+        items []string,
+        concurrencyLim int,
+        handler ItemHandler,
+) (err error) <span class="cov0" title="0">{
+        g := errgroup.Group{}
+
+        tokens := make(chan struct{}, concurrencyLim)
+
+        for i := 0; i &lt; concurrencyLim; i++ </span><span class="cov0" title="0">{
+                tokens &lt;- struct{}{}
+        }</span>
+
+        <span class="cov0" title="0">for _, item := range items </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        goto out</span>
+                case &lt;-tokens:<span class="cov0" title="0">
+                        g.Go(
+                                func() error </span><span class="cov0" title="0">{
+                                        err = handler(item)
+                                        tokens &lt;- struct{}{}
+                                        return err
+                                }</span>,
+                        )
+                }
+        }
+
+out:
+        // wail for all running tasks
+        <span class="cov0" title="0">if err = g.Wait(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
+}
+
+func (s Synchronizer) handleFilePairs(
+        ctx context.Context,
+        log *logrus.Logger,
+        pairs []SyncPair,
+        concurrencyLim int,
+) (err error) <span class="cov0" title="0">{
+        g := errgroup.Group{}
+
+        tokens := make(chan struct{}, concurrencyLim)
+
+        for i := 0; i &lt; concurrencyLim; i++ </span><span class="cov0" title="0">{
+                tokens &lt;- struct{}{}
+        }</span>
+
+        <span class="cov0" title="0">for _, pair := range pairs </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        goto out</span>
+                case &lt;-tokens:<span class="cov0" title="0">
+                        g.Go(
+                                func() error </span><span class="cov0" title="0">{
+                                        err = s.syncPair(ctx, log, pair)
+                                        tokens &lt;- struct{}{}
+                                        return err
+                                }</span>,
+                        )
+                }
+        }
+out:
+        <span class="cov0" title="0">if err = g.Wait(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
+}
+
+func (s Synchronizer) handleNewDirectories(
+        ctx context.Context,
+        newDirs []NewDirectory,
+        concurrencyLim int,
+) (err error) <span class="cov0" title="0">{
+        var g errgroup.Group
+
+        tokens := make(chan struct{}, concurrencyLim)
+
+        for i := 0; i &lt; concurrencyLim; i++ </span><span class="cov0" title="0">{
+                tokens &lt;- struct{}{}
+        }</span>
+
+        <span class="cov0" title="0">for _, nd := range newDirs </span><span class="cov0" title="0">{
+                select </span>{
+                case &lt;-ctx.Done():<span class="cov0" title="0">
+                        goto out</span>
+                case &lt;-tokens:<span class="cov0" title="0">
+                        g.Go(
+                                func() error </span><span class="cov0" title="0">{
+                                        err = s.createDirs(nd.DirPath, nd.DirMode)
+                                        tokens &lt;- struct{}{}
+                                        return err
+                                }</span>,
+                        )
+                }
+        }
+out:
+        <span class="cov0" title="0">if err = g.Wait(); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
+}
+
+// fclose internal function for deferred error handling from closed files.
+// Can close readers and writers
+func (s Synchronizer) fclose(log *logrus.Logger, file io.ReadWriteCloser) <span class="cov0" title="0">{
+        if err := file.Close(); err != nil </span><span class="cov0" title="0">{
+                log.Error(err)
+        }</span>
+}
+
+// SyncByTimer infinite loop activated by timer and run sync operation.
+// If b (Block) is locked return error and wait next timer
+func SyncByTimer(
+        ctx context.Context,
+        cfg *ServerConfig,
+        b *Block,
+) (err error) <span class="cov0" title="0">{
+
+        var hrs, mns, sec int
+
+        // get local time
+        tm := time.Now().UTC()
+
+        // truncate by day
+        tx := tm.Truncate(24 * time.Hour)
+        parts := strings.Split(cfg.SyncTime, ":")
+        if len(parts) &lt; 3 </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid time preset")
+        }</span>
+
+        // handle hours
+        <span class="cov0" title="0">if hrs, err = strconv.Atoi(parts[0]); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if hrs &lt; 0 || hrs &gt; 23 </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">tx.Add(time.Duration(hrs) * time.Hour)
+
+        // handle minutes
+        if mns, err = strconv.Atoi(parts[1]); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if mns &lt; 0 || mns &gt; 59 </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">tx.Add(time.Duration(mns) * time.Minute)
+
+        // handle seconds
+        if sec, err = strconv.Atoi(parts[1]); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if sec &lt; 0 || mns &gt; 59 </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">tx.Add(time.Duration(sec) * time.Second)
+
+        if tm.After(tx) </span><span class="cov0" title="0">{
+                // add 24 hours for tx
+                tx.Add(24 * time.Hour)
+        }</span>
+
+        // sub current time from wished - we got current sync interval
+        <span class="cov0" title="0">t := time.NewTimer(tx.Sub(tm))
+
+        // we may use go &lt; 1.23, so we have to care about timers
+        defer t.Stop()
+
         for </span><span class="cov0" title="0">{
                 select </span>{
                 case &lt;-ctx.Done():<span class="cov0" title="0">
+                        // ...
                         return ctx.Err()</span>
-                default:<span class="cov0" title="0">
-                        // more readable
-                        break</span>
-                }
+                case &lt;-t.C:<span class="cov0" title="0">
+                        if b.Lock() </span>{<span class="cov0" title="0">
+                                // do operation
+                        }</span>
 
-                // handle clients
+                        // not locked - any other sync running, let`s notify
+                        // and wait next timer
+                        // ...
+
+                        // === time
+                        // truncate by 24 h
+                        // add h, m, s from preset
+                        // sub time.Now() from new time -&gt; got new interval
+
+                        <span class="cov0" title="0">if ok := t.Reset(cfg.GracefulShutdownTimeout); !ok </span><span class="cov0" title="0">{
+                                return fmt.Errorf("broken synchronization timer")
+                        }</span>
+                }
         }
 }
+
+// DefaultTimePartsSeparator to parse h, m, s
+const (
+        DefaultTimePartsSeparator = ":"
+
+        // numeric const section
+
+        // RequiredTimePartsCount is 3 for hours, minutes and seconds
+        RequiredTimePartsCount = 3
+
+        MinPossibleTimeValue   = 0
+        MaxPossibleHoursValue  = 23
+        MaxPossibleMinSecValue = 59
+)
+
+// SyncTimeParser for handle sync time
+type SyncTimeParser struct {
+        H time.Duration
+        M time.Duration
+        S time.Duration
+}
+
+// SetupInitialSyncTime convert time string (like 12:45:15) into numeric values
+// for hours, minutes and seconds
+func (stp *SyncTimeParser) SetupInitialSyncTime(tmFmt string) (err error) <span class="cov0" title="0">{
+        if stp == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("time parser not init")
+        }</span>
+
+        <span class="cov0" title="0">parts := strings.Split(tmFmt, DefaultTimePartsSeparator)
+        if len(parts) &lt; RequiredTimePartsCount </span><span class="cov0" title="0">{
+                return fmt.Errorf("invalid time parts count")
+        }</span>
+
+        <span class="cov0" title="0">if err = stp.SetHours(parts[0]); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if err = stp.SetMinutes(parts[1]); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if err = stp.SetSeconds(parts[2]); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
+}
+
+func (stp *SyncTimeParser) SetHours(h string) (err error) <span class="cov8" title="1">{
+        var hrs int
+
+        if stp == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("time parser not init")
+        }</span>
+
+        <span class="cov8" title="1">if hrs, err = strconv.Atoi(h); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if hrs &lt; MinPossibleTimeValue || hrs &gt; MaxPossibleHoursValue </span><span class="cov8" title="1">{
+                return fmt.Errorf("hours have to be in between of 0 and 23")
+        }</span>
+
+        // set hours as Duration
+        <span class="cov8" title="1">stp.H = time.Duration(hrs) * time.Hour
+        return err</span>
+}
+
+func (stp *SyncTimeParser) SetMinutes(m string) (err error) <span class="cov8" title="1">{
+        var mns int
+
+        if stp == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("time parser not init")
+        }</span>
+
+        <span class="cov8" title="1">if mns, err = strconv.Atoi(m); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if mns &lt; MinPossibleTimeValue || mns &gt; MaxPossibleMinSecValue </span><span class="cov8" title="1">{
+                return fmt.Errorf("minutes have to be in between of 0 and 59")
+        }</span>
+
+        // set hours as Duration
+        <span class="cov8" title="1">stp.M = time.Duration(mns) * time.Minute
+        return err</span>
+}
+
+func (stp *SyncTimeParser) SetSeconds(s string) (err error) <span class="cov8" title="1">{
+        var sec int
+
+        if stp == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("time parser not init")
+        }</span>
+
+        <span class="cov8" title="1">if sec, err = strconv.Atoi(s); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if sec &lt; MinPossibleTimeValue || sec &gt; MaxPossibleMinSecValue </span><span class="cov8" title="1">{
+                return fmt.Errorf("seconds have to be in between of 0 and 59")
+        }</span>
+
+        // set hours as Duration
+        <span class="cov8" title="1">stp.M = time.Duration(sec) * time.Second
+        return err</span>
+}
+
+func (stp *SyncTimeParser) GetSyncInterval(tm time.Time) time.Duration <span class="cov0" title="0">{
+        return 1 * time.Second
+}</span>
 </pre>
 		
 		</div>

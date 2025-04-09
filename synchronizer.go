@@ -458,6 +458,20 @@ func SyncByTimer(
 	}
 }
 
+// DefaultTimePartsSeparator to parse h, m, s
+const (
+	DefaultTimePartsSeparator = ":"
+
+	// numeric const section
+
+	// RequiredTimePartsCount is 3 for hours, minutes and seconds
+	RequiredTimePartsCount = 3
+
+	MinPossibleTimeValue   = 0
+	MaxPossibleHoursValue  = 23
+	MaxPossibleMinSecValue = 59
+)
+
 // SyncTimeParser for handle sync time
 type SyncTimeParser struct {
 	H time.Duration
@@ -465,19 +479,90 @@ type SyncTimeParser struct {
 	S time.Duration
 }
 
-func (stp *SyncTimeParser) Parse(tmFmt string) (err error) {
+// SetupInitialSyncTime convert time string (like 12:45:15) into numeric values
+// for hours, minutes and seconds
+func (stp *SyncTimeParser) SetupInitialSyncTime(tmFmt string) (err error) {
+	if stp == nil {
+		return fmt.Errorf("time parser not init")
+	}
+
+	parts := strings.Split(tmFmt, DefaultTimePartsSeparator)
+	if len(parts) != RequiredTimePartsCount {
+		return fmt.Errorf("invalid time parts count")
+	}
+
+	if err = stp.SetHours(parts[0]); err != nil {
+		return err
+	}
+
+	if err = stp.SetMinutes(parts[1]); err != nil {
+		return err
+	}
+
+	if err = stp.SetSeconds(parts[2]); err != nil {
+		return err
+	}
+
 	return err
 }
 
-func (stp *SyncTimeParser) SetHours(tm time.Time, h int) (err error) {
+func (stp *SyncTimeParser) SetHours(h string) (err error) {
+	var hrs int
+
+	if stp == nil {
+		return fmt.Errorf("time parser not init")
+	}
+
+	if hrs, err = strconv.Atoi(h); err != nil {
+		return err
+	}
+
+	if hrs < MinPossibleTimeValue || hrs > MaxPossibleHoursValue {
+		return fmt.Errorf("hours have to be in between of 0 and 23")
+	}
+
+	// set hours as Duration
+	stp.H = time.Duration(hrs) * time.Hour
 	return err
 }
 
-func (stp *SyncTimeParser) SetMinutes(tm time.Time, m int) (err error) {
+func (stp *SyncTimeParser) SetMinutes(m string) (err error) {
+	var mns int
+
+	if stp == nil {
+		return fmt.Errorf("time parser not init")
+	}
+
+	if mns, err = strconv.Atoi(m); err != nil {
+		return err
+	}
+
+	if mns < MinPossibleTimeValue || mns > MaxPossibleMinSecValue {
+		return fmt.Errorf("minutes have to be in between of 0 and 59")
+	}
+
+	// set hours as Duration
+	stp.M = time.Duration(mns) * time.Minute
 	return err
 }
 
-func (stp *SyncTimeParser) SetSeconds(tm time.Time, s int) (err error) {
+func (stp *SyncTimeParser) SetSeconds(s string) (err error) {
+	var sec int
+
+	if stp == nil {
+		return fmt.Errorf("time parser not init")
+	}
+
+	if sec, err = strconv.Atoi(s); err != nil {
+		return err
+	}
+
+	if sec < MinPossibleTimeValue || sec > MaxPossibleMinSecValue {
+		return fmt.Errorf("seconds have to be in between of 0 and 59")
+	}
+
+	// set hours as Duration
+	stp.S = time.Duration(sec) * time.Second
 	return err
 }
 
