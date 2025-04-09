@@ -376,58 +376,31 @@ func SyncByTimer(
 	b *Block,
 ) (err error) {
 
-	var hrs, mns, sec int
+	var tx time.Duration
+	var tm time.Time
+
+	// read wished sync time (as '23:12:45' string) and set required
+	// hours, minutes and seconds as time.Duration inside
+	syncTimeGen := SyncTimeParser{}
+	if err = syncTimeGen.SetupInitialSyncTime(cfg.SyncTime); err != nil {
+		return err
+	}
 
 	// get local time
-	tm := time.Now().UTC()
+	// TODO: wrap into top-level operation
+	if tm, err = syncTimeGen.GetUTCTime(); err != nil {
+		return err
+	}
 
 	// truncate by day
-	tx := tm.Truncate(24 * time.Hour)
-	parts := strings.Split(cfg.SyncTime, ":")
-	if len(parts) < 3 {
-		return fmt.Errorf("invalid time preset")
-	}
-
-	// handle hours
-	if hrs, err = strconv.Atoi(parts[0]); err != nil {
+	if tx, err = syncTimeGen.SetSyncTime(
+		tm,
+		tm.Truncate(24*time.Hour),
+	); err != nil {
 		return err
 	}
-
-	if hrs < 0 || hrs > 23 {
-		return err
-	}
-
-	tx.Add(time.Duration(hrs) * time.Hour)
-
-	// handle minutes
-	if mns, err = strconv.Atoi(parts[1]); err != nil {
-		return err
-	}
-
-	if mns < 0 || mns > 59 {
-		return err
-	}
-
-	tx.Add(time.Duration(mns) * time.Minute)
-
-	// handle seconds
-	if sec, err = strconv.Atoi(parts[1]); err != nil {
-		return err
-	}
-
-	if sec < 0 || mns > 59 {
-		return err
-	}
-
-	tx.Add(time.Duration(sec) * time.Second)
-
-	if tm.After(tx) {
-		// add 24 hours for tx
-		tx.Add(24 * time.Hour)
-	}
-
 	// sub current time from wished - we got current sync interval
-	t := time.NewTimer(tx.Sub(tm))
+	t := time.NewTimer(tx)
 
 	// we may use go < 1.23, so we have to care about timers
 	defer t.Stop()
@@ -438,22 +411,36 @@ func SyncByTimer(
 			// ...
 			return ctx.Err()
 		case <-t.C:
+			// TODO: wrap into top-level operation
 			if b.Lock() {
 				// do operation
+
+				if !b.Unlock() {
+					panic("broken Block")
+				}
 			}
+			// ---------------------------------------
 
 			// not locked - any other sync running, let`s notify
 			// and wait next timer
-			// ...
-
-			// === time
-			// truncate by 24 h
-			// add h, m, s from preset
-			// sub time.Now() from new time -> got new interval
+			// === time (set new interval for next sync)
+			// TODO: wrap into top-level operation
+			if tm, err = syncTimeGen.GetUTCTime(); err != nil {
+				return err
+			}
+			if tx, err = syncTimeGen.SetSyncTime(
+				tm,
+				tm.Truncate(24*time.Hour),
+			); err != nil {
+				return err
+			}
+			// -----------------------------------------------------------------
 
 			if ok := t.Reset(cfg.GracefulShutdownTimeout); !ok {
 				return fmt.Errorf("broken synchronization timer")
 			}
+
+			t = time.NewTimer(tx)
 		}
 	}
 }
@@ -566,6 +553,30 @@ func (stp *SyncTimeParser) SetSeconds(s string) (err error) {
 	return err
 }
 
-func (stp *SyncTimeParser) GetSyncInterval(tm time.Time) time.Duration {
-	return 1 * time.Second
+func (stp *SyncTimeParser) SetSyncTime(
+	origin time.Time,
+	truncated time.Time,
+) (t time.Duration, err error) {
+	if stp == nil {
+		return t, fmt.Errorf("time parser not init")
+	}
+
+	truncated.Add(stp.H)
+	truncated.Add(stp.M)
+	truncated.Add(stp.S)
+
+	if origin.After(truncated) {
+		// add 24 hours for truncated because it
+		// before current time
+		truncated.Add(24 * time.Hour)
+	}
+
+	return truncated.Sub(origin), err
+}
+
+func (stp *SyncTimeParser) GetUTCTime() (t time.Time, err error) {
+	if stp == nil {
+		return t, fmt.Errorf("time parser not init")
+	}
+	return time.Now().UTC(), err
 }
