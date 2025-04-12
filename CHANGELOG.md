@@ -16,6 +16,7 @@
 
 ### Features
 
+- add /health /config/update for route /api/v1 ([7bfc236](https://github.com/Omarmeks89/fsyncd/commit/7bfc236b0eb8243c22052c774408042b2561c223) by Егор Марков). test: repair tests
 - create config, create server, update logger setup, update main func, create configuration file ([386ff90](https://github.com/Omarmeks89/fsyncd/commit/386ff901d367d7230e1329bde8d665cfc4d1797e) by Егор Марков).
 - create Sync function as a command entry point ([34bd980](https://github.com/Omarmeks89/fsyncd/commit/34bd980826fcb784bffce54f4782b9063fdf357c) by Егор Марков).
 - create BFS creation alg to create missed directories in dst ([d6c276f](https://github.com/Omarmeks89/fsyncd/commit/d6c276f71ec29d5e0d8425274834a3c685b705fb) by Егор Марков). test: fix previous tests, add new tests
@@ -32,7 +33,7 @@
 
 ### Tests
 
-- add tests for SyncTimeGenerator, fix previous tests ([a99987c](https://github.com/Omarmeks89/fsyncd/commit/a99987c9f8991a8ab0823135f36a757c95e25761) by Егор Марков).
+- add tests for SyncTimeParser, fix previous tests ([a99987c](https://github.com/Omarmeks89/fsyncd/commit/a99987c9f8991a8ab0823135f36a757c95e25761) by Егор Марков).
 - add test for signal error check, fix previous tests ([88f5b7f](https://github.com/Omarmeks89/fsyncd/commit/88f5b7ffc85eb9bc018d735e07cada8b7837268c) by Егор Марков).
 
 <!-- insertion marker -->
