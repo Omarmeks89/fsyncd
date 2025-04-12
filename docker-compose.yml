@@ -1,0 +1,34 @@
+# docker-compose for SWARM
+
+services:
+  fsyncd:
+    image: fsyncd:v0.1.0-1.a
+    command: ./fsyncd/fsyncd
+    ports:
+      - 6767:6767
+    configs:
+      - source: fsyncd-manifest
+        target: /fsync.yml
+      - source: fsyncd-sync-driver
+        target: /driver_config.yml
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: 0.10
+          memory: 50M
+        reservations:
+          cpus: 0.10
+          memory: 10M
+    networks:
+      - fsync-net
+
+configs:
+  fsyncd-manifest:
+    file: ./fsync.yml
+  fsyncd-sync-driver:
+    file: ./driver_config.yml
+
+networks:
+  fsync-net:
+    external: true

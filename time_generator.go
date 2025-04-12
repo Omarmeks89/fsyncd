@@ -4,7 +4,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -116,10 +115,7 @@ func (stp *SyncTimeGenerator) SetSyncTime(origin time.Time) (
 // GetLocalTime get time for current location (timezone)
 func (stp *SyncTimeGenerator) GetLocalTime() (t time.Time, err error) {
 	if stp.location == nil {
-		// we have to set local time
-		if err = stp.SetLocalTime(); err != nil {
-			return t, err
-		}
+		return t, fmt.Errorf("location not set")
 	}
 
 	return time.Now().Local(), err
@@ -137,19 +133,7 @@ func (stp *SyncTimeGenerator) GenerateInterval() (d time.Duration, err error) {
 }
 
 // SetLocalTime from OS settings (/etc/localtime)
-func (stp *SyncTimeGenerator) SetLocalTime() (err error) {
-	var link, location string
-
-	if link, err = os.Readlink(OSLocalTimeLink); err != nil {
-		return err
-	}
-
-	parts := strings.Split(link, OSLinkDefaultSeparator)
-	if len(parts) < 2 {
-		return fmt.Errorf("broken localtime description '%s'\n", link)
-	}
-
-	location = strings.Join(parts[len(parts)-2:], OSLinkDefaultSeparator)
+func (stp *SyncTimeGenerator) SetLocalTime(location string) (err error) {
 	if stp.location, err = time.LoadLocation(location); err != nil {
 		return err
 	}

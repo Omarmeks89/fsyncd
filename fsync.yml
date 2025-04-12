@@ -6,6 +6,7 @@ swagger_port: 6768
 
 # possible drivers: default, vault
 config_driver: "default"
+location: "Europe/Moscow"
 
 # === connection timeouts
 conn_read_timeout: 10s

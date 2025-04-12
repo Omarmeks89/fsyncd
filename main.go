@@ -26,24 +26,6 @@ func main() {
 	var g errgroup.Group
 	var syncCfg SyncConfig
 
-	timeGen := SyncTimeGenerator{}
-	if err = timeGen.SetLocalTime(); err != nil {
-		logrus.WithFields(
-			logrus.Fields{
-				"stage": "set_locale",
-				"state": "failed",
-				"error": err.Error(),
-			},
-		).Fatal(err)
-	}
-
-	logrus.WithFields(
-		logrus.Fields{
-			"stage": "init",
-			"state": "processing",
-		},
-	).Infof("location set: %+v\n", timeGen.location)
-
 	// load master config for application
 	if err = cfg.Load(); err != nil {
 		logrus.WithFields(
@@ -64,6 +46,24 @@ func main() {
 			},
 		).Fatal(err)
 	}
+
+	timeGen := SyncTimeGenerator{}
+	if err = timeGen.SetLocalTime(cfg.Location); err != nil {
+		logrus.WithFields(
+			logrus.Fields{
+				"stage": "set_locale",
+				"state": "failed",
+				"error": err.Error(),
+			},
+		).Fatal(err)
+	}
+
+	logrus.WithFields(
+		logrus.Fields{
+			"stage": "init",
+			"state": "processing",
+		},
+	).Infof("location set: %+v\n", timeGen.location)
 
 	// load sync config
 	driver, ok := cfgDrivers[cfg.ConfigDriver]

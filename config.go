@@ -26,6 +26,8 @@ type ServerConfig struct {
 
 	ConfigDriver string `yaml:"config_driver" validate:"required,oneof=vault default"`
 
+	Location string `yaml:"location" validate:"required"`
+
 	// connection settings
 	ConnReadTimeout         time.Duration `yaml:"conn_read_timeout" validate:"required"`
 	ConnWriteTimeout        time.Duration `yaml:"conn_write_timeout" validate:"required"`
