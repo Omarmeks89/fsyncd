@@ -11,9 +11,6 @@ import (
 
 // DefaultTimePartsSeparator to parse h, m, s
 const (
-	// OSLocalTimeLink is used for setup local time from OS
-	OSLocalTimeLink           = "/etc/localtime"
-	OSLinkDefaultSeparator    = "/"
 	DefaultTimePartsSeparator = ":"
 
 	// numeric const section

@@ -9,6 +9,7 @@
 
 ### Bug Fixes
 
+- fix bug with lost /etc/location inside a container ([2ce3c8f](https://github.com/Omarmeks89/fsyncd/commit/2ce3c8f342b2de2e9188c17cf6fdd3dd192b9e58) by Егор Марков). refactor: remove unuseful const
 - fix bug with copy-paste, the reason of files not created ([36703ae](https://github.com/Omarmeks89/fsyncd/commit/36703ae18ecc26c5c5cbeb05d81197b01fa58f4e) by Егор Марков).
 - fix bugs with goro pool, directory creation ([2a1f00e](https://github.com/Omarmeks89/fsyncd/commit/2a1f00e494d00f38f7db9544cfaaad8eb668bc67) by Егор Марков). test: fix tests, add new tests
 - fix bug with dst path shadowing (with src path) ([984d47b](https://github.com/Omarmeks89/fsyncd/commit/984d47b375712804105de44b4692542fad65636e) by Егор Марков).
@@ -28,6 +29,7 @@
 
 ### Code Refactoring
 
+- add const instead of magic-values, remove unuseful logging ([9af22eb](https://github.com/Omarmeks89/fsyncd/commit/9af22eb921eb9857dc939b8446ee31f0ac4592eb) by Егор Марков).
 - cleanup code ([9b5cdd6](https://github.com/Omarmeks89/fsyncd/commit/9b5cdd620a66684fc64c05682e9f70791423c9e9) by Егор Марков).
 - update SyncCommand implementation, delete unuseful code, delete unuseful tests ([4b5e627](https://github.com/Omarmeks89/fsyncd/commit/4b5e627c1f21e928c0f293986a1a0c84e7a77df2) by Егор Марков).
 
