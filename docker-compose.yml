@@ -20,6 +20,9 @@ services:
         reservations:
           cpus: 0.10
           memory: 10M
+    volumes:
+      # mount root directory path
+      - /home:/home
     networks:
       - fsync-net
 

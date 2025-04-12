@@ -1,16 +1,16 @@
-COVERAGE_DIR = coverage
-COVERAGE_FNAME = cover.html
+COVERAGE_DIR 		= coverage
+COVERAGE_FNAME 		= cover.html
 
-COVERAGE_SRC = $(COVERAGE_DIR)/coverage.out
-COVERAGE_DST = $(COVERAGE_DIR)/$(COVERAGE_FNAME)
+COVERAGE_SRC 		= $(COVERAGE_DIR)/coverage.out
+COVERAGE_DST 		= $(COVERAGE_DIR)/$(COVERAGE_FNAME)
 
 # compilation flags
-GO_VARS = CGO_ENABLED=0
-GO_FLAGS = -trimpath
+GO_VARS 			= 	CGO_ENABLED=0
+GO_FLAGS 			= 	-trimpath
 
-APP = fsyncd
+APP 				= 	fsyncd
 
-.PHONY: all build clear
+.PHONY: 			all build clear
 
 build:
 	$(GO_VARS) go build $(GO_FLAGS) -o $(APP) .

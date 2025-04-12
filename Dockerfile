@@ -8,6 +8,7 @@ COPY *.go                   ./
 
 # create and set user
 RUN apk add --no-cache shadow
+RUN apk add --no-cache tzdata
 RUN addgroup -S fsyncd && \
     adduser -S -D -H -G fsyncd fsyncd
 
@@ -18,6 +19,8 @@ FROM build-stage AS bs
 
 WORKDIR /
 COPY --from=build-stage /fsyncd /fsyncd
+COPY --from=build-stage /usr    /usr
+COPY --from=build-stage /etc    /etc
 
 # set owner
 RUN chown fsyncd:fsyncd /fsyncd
@@ -25,3 +28,5 @@ USER fsyncd
 
 FROM scratch
 COPY --from=bs /fsyncd /fsyncd
+COPY --from=bs /usr    /usr
+COPY --from=bs /etc    /etc
