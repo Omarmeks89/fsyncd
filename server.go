@@ -5,13 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 	"github.com/sirupsen/logrus"
 	"net/http"
-	"os/signal"
 	"sync"
-	"syscall"
 )
 
 var BrokenServer = fmt.Errorf("broken server")
@@ -63,12 +62,18 @@ func (b *Block) Unlock() bool {
 	return b.isFree
 }
 
+type LoaderUpdater interface {
+	LoadSyncConfig() (s SyncConfig, err error)
+	UpdateSyncConfig(config SyncConfig) (err error)
+}
+
 // Server used for handle API
 type Server struct {
 	g   *gin.Engine
 	b   *Block
 	log *logrus.Logger
 	cfg *ServerConfig
+	d   LoaderUpdater
 }
 
 // MakeServer factory function for create new server to handle API
@@ -92,20 +97,15 @@ func MakeServer(cfg *ServerConfig, log *logrus.Logger, b *Block) (
 	}, err
 }
 
+func (srv *Server) SetConfigDriver(d LoaderUpdater) {
+	srv.d = d
+}
+
 // HandleSyncCommand handle unscheduled used command.
 // Return http status 409 if operation running
 func (srv *Server) HandleSyncCommand(c *gin.Context) {
 	var syncReq SyncDirectoriesRequest
-	var sm, dm SyncMeta
 	var err error
-
-	if srv == nil {
-		_ = c.AbortWithError(
-			http.StatusInternalServerError,
-			BrokenServer,
-		)
-		return
-	}
 
 	// Validate request
 	if err = c.BindJSON(&syncReq); err != nil {
@@ -133,48 +133,86 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) {
 		}
 	}()
 
-	// we take a lock let`s handle command
-	if sm, dm, err = HandlePaths(syncReq.SrcPath, syncReq.DstPath); err != nil {
+	// root directories have to be different
+	if syncReq.SrcPath == syncReq.DstPath {
 		_ = c.AbortWithError(
-			http.StatusInternalServerError,
-			fmt.Errorf("invalid paths"),
+			http.StatusBadRequest,
+			fmt.Errorf("equal sync path"),
 		)
 		return
 	}
 
-	syncCmd := MakeSyncCommand(syncReq.MaxDiffPercent)
-	if err = syncCmd.Prepare(sm, dm); err != nil {
-		_ = c.AbortWithError(http.StatusInternalServerError, err)
-		return
+	// we take a lock let`s handle command
+	scfg := SyncConfig{
+		SrcPath:        syncReq.SrcPath,
+		DstPath:        syncReq.DstPath,
+		MaxDiffPercent: syncReq.MaxDiffPercent,
 	}
 
-	// start sync
-	snc := MakeSynchronizer()
-	if err = snc.Sync(context.Background(), syncCmd, srv.log); err != nil {
+	ctx := context.Background()
+	if err = SyncDirectories(ctx, srv.log, scfg); err != nil {
 		_ = c.AbortWithError(http.StatusInternalServerError, err)
-		return
 	}
 }
 
 // UpdateConfiguration command for update server sync configuration
 func (srv *Server) UpdateConfiguration(c *gin.Context) {
+	var sCfg ChangeSyncConfig
+	var err error
+
+	// Validate request
+	if err = c.BindJSON(&sCfg); err != nil {
+		_ = c.AbortWithError(http.StatusBadRequest, err)
+		return
+	}
+
+	vld := validator.New(validator.WithRequiredStructEnabled())
+	if err = vld.Struct(&sCfg); err != nil {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+
+	syncConfig := SyncConfig{
+		SrcPath:        sCfg.SrcPath,
+		DstPath:        sCfg.DstPath,
+		SyncTime:       sCfg.SyncTime,
+		MaxDiffPercent: sCfg.MaxDiffPercent,
+	}
+
+	if err = srv.d.UpdateSyncConfig(syncConfig); err != nil {
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
 	c.IndentedJSON(http.StatusOK, 200)
 }
 
+// GetCurrentConfig return current synchronization config
 func (srv *Server) GetCurrentConfig(c *gin.Context) {
+	var cfg SyncConfig
+	var err error
+
+	if cfg, err = srv.d.LoadSyncConfig(); err != nil {
+		_ = c.AbortWithError(http.StatusInternalServerError, err)
+		return
+	}
+
+	c.IndentedJSON(http.StatusOK, cfg)
+}
+
+// Health for lifecycle handling
+func (srv *Server) Health(c *gin.Context) {
 	c.IndentedJSON(http.StatusOK, 200)
 }
 
 // Run server
 func (srv *Server) Run(ctx context.Context) (err error) {
-	if srv == nil {
-		return BrokenServer
+	// setup gin router
+
+	if srv.d == nil {
+		return fmt.Errorf("config driver not set")
 	}
 
-	sCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
-
-	// setup gin router
 	if err = srv.setup(); err != nil {
 		return err
 	}
@@ -196,8 +234,7 @@ func (srv *Server) Run(ctx context.Context) (err error) {
 		}
 	}()
 
-	<-sCtx.Done()
-	stop()
+	<-ctx.Done()
 
 	srv.log.Debugf("shutting down gracefully, press Ctrl + C to force")
 
@@ -221,14 +258,29 @@ func (srv *Server) setup() (err error) {
 
 	srv.g = gin.Default()
 
+	// setup CORS
+	srv.g.Use(
+		cors.New(
+			cors.Config{
+				AllowPrivateNetwork: true,
+				AllowHeaders:        srv.cfg.AllowedHeaders,
+				AllowMethods:        srv.cfg.AllowedMethods,
+				AllowOrigins:        srv.cfg.AllowedHosts,
+			},
+		),
+	)
+
 	// register sync handler
 	srv.g.PATCH("/api/v1/sync/directories", srv.HandleSyncCommand)
 
 	// register handler for update server config
-	srv.g.PATCH("/api/v1/server/config/update", srv.UpdateConfiguration)
+	srv.g.PATCH("/api/v1/sync/config/update", srv.UpdateConfiguration)
 
 	// register handler for return actual server config
-	srv.g.GET("/api/v1/server/config", srv.GetCurrentConfig)
+	srv.g.GET("/api/v1/sync/config", srv.GetCurrentConfig)
+
+	// register /health endpoint for control
+	srv.g.GET("/api/v1/health", srv.Health)
 
 	return err
 }

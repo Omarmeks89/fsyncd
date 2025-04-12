@@ -3,7 +3,6 @@ package main
 import (
 	"github.com/stretchr/testify/require"
 	"testing"
-	"time"
 )
 
 func TestSyncTimeParser_SetMinutes(t *testing.T) {
@@ -35,7 +34,7 @@ func TestSyncTimeParser_SetMinutes(t *testing.T) {
 		},
 	}
 
-	tmParser := SyncTimeParser{}
+	tmParser := SyncTimeGenerator{}
 
 	for _, tt := range tests {
 		t.Run(
@@ -84,7 +83,7 @@ func TestSyncTimeParser_SetHours(t *testing.T) {
 		},
 	}
 
-	tmParser := SyncTimeParser{}
+	tmParser := SyncTimeGenerator{}
 
 	for _, tt := range tests {
 		t.Run(
@@ -128,7 +127,7 @@ func TestSyncTimeParser_SetSeconds(t *testing.T) {
 		},
 	}
 
-	tmParser := SyncTimeParser{}
+	tmParser := SyncTimeGenerator{}
 
 	for _, tt := range tests {
 		t.Run(
@@ -148,23 +147,23 @@ func TestSyncTimeParser_SetupInitialSyncTime(t *testing.T) {
 	tests := []struct {
 		name    string
 		tm      string
-		H       time.Duration
-		M       time.Duration
-		S       time.Duration
+		H       int
+		M       int
+		S       int
 		wantErr bool
 	}{
 		{
 			name: "set valid time 1",
 			tm:   "00:12:35",
-			M:    12 * time.Minute,
-			S:    35 * time.Second,
+			M:    12,
+			S:    35,
 		},
 		{
 			name: "set valid time 2",
 			tm:   "23:59:59",
-			H:    23 * time.Hour,
-			M:    59 * time.Minute,
-			S:    59 * time.Second,
+			H:    23,
+			M:    59,
+			S:    59,
 		},
 		{
 			name: "set valid time 3",
@@ -205,8 +204,8 @@ func TestSyncTimeParser_SetupInitialSyncTime(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(
 			tt.name, func(t *testing.T) {
-				tmParser := SyncTimeParser{}
-				err := tmParser.SetupInitialSyncTime(tt.tm)
+				tmParser := SyncTimeGenerator{}
+				err := tmParser.SetupSyncTime(tt.tm)
 
 				if tt.wantErr {
 					require.Error(t, err)

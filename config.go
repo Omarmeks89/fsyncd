@@ -3,7 +3,7 @@ package main
 
 import (
 	"github.com/go-playground/validator/v10"
-	"github.com/stretchr/testify/assert/yaml"
+	"gopkg.in/yaml.v3"
 	"io"
 	"os"
 	"sync"
@@ -12,6 +12,7 @@ import (
 
 // DefaultConfigName for detect config file
 const DefaultConfigName = "fsync.yml"
+const DriverConfigFilename = "driver_config.yml"
 
 // ServerConfig contains all required server parameters
 type ServerConfig struct {
@@ -23,15 +24,7 @@ type ServerConfig struct {
 	SwaggerEnabled bool   `yaml:"swagger_enabled" validate:"required"`
 	SwaggerPort    string `yaml:"swagger_port" validate:"numeric"`
 
-	// sync section
-	// 'dirpath' will fail if directory not exists
-	SrcPath        string `yaml:"src_path" validate:"required,dirpath"`
-	DstPath        string `yaml:"dst_path" validate:"required,dirpath"`
-	MaxDiffPercent int    `yaml:"max_diff_percent" validate:"required,gt=0,lte=100"`
-	SyncTime       string `yaml:"sync_time" validate:"required"`
-
-	// external data source
-	// ...
+	ConfigDriver string `yaml:"config_driver" validate:"required,oneof=vault default"`
 
 	// connection settings
 	ConnReadTimeout         time.Duration `yaml:"conn_read_timeout" validate:"required"`
@@ -67,7 +60,7 @@ func (sc *ServerConfig) Load() (err error) {
 		return err
 	}
 
-	if _, err = sc.Validate(); err != nil {
+	if err = sc.Validate(); err != nil {
 		return err
 	}
 
@@ -75,11 +68,89 @@ func (sc *ServerConfig) Load() (err error) {
 }
 
 // Validate config fields and return error if validation failed
-func (sc *ServerConfig) Validate() (ok bool, err error) {
+func (sc *ServerConfig) Validate() (err error) {
 	v := validator.New(validator.WithRequiredStructEnabled())
 	if err = v.Struct(sc); err != nil {
-		return ok, err
+		return err
 	}
 
-	return ok, err
+	return err
+}
+
+type SyncConfig struct {
+	SrcPath        string `yaml:"src_path" json:"src_path" validate:"required,dirpath"`
+	DstPath        string `yaml:"dst_path" json:"dst_path" validate:"required,dirpath,nefield=SrcPath"`
+	MaxDiffPercent int    `yaml:"max_diff_percent" json:"max_diff_percent" validate:"required,gt=0,lte=100"`
+	SyncTime       string `yaml:"sync_time" json:"sync_time" validate:"required"`
+}
+
+type DefaultConfigDriver struct{}
+
+func (d DefaultConfigDriver) LoadSyncConfig() (
+	c SyncConfig,
+	err error,
+) {
+	var file *os.File
+	var buf []byte
+
+	if file, err = os.Open(DriverConfigFilename); err != nil {
+		return c, err
+	}
+
+	if buf, err = io.ReadAll(file); err != nil {
+		return c, err
+	}
+
+	if err = yaml.Unmarshal(buf, &c); err != nil {
+		return c, err
+	}
+
+	if err = d.Validate(&c); err != nil {
+		return c, err
+	}
+
+	return c, err
+}
+
+func (d DefaultConfigDriver) Validate(c *SyncConfig) (err error) {
+	vld := validator.New(validator.WithRequiredStructEnabled())
+	if err = vld.Struct(c); err != nil {
+		return err
+	}
+
+	return err
+}
+
+func (d DefaultConfigDriver) UpdateSyncConfig(nc SyncConfig) (err error) {
+	var buf []byte
+	var file *os.File
+	var stat os.FileInfo
+
+	if err = d.Validate(&nc); err != nil {
+		return err
+	}
+
+	if stat, err = os.Stat(DriverConfigFilename); err != nil {
+		return err
+	}
+
+	// open file with same file mode
+	if file, err = os.OpenFile(
+		DriverConfigFilename,
+		os.O_RDWR|os.O_TRUNC,
+		stat.Mode(),
+	); err != nil {
+		return err
+	}
+	defer file.Close()
+
+	if buf, err = yaml.Marshal(&nc); err != nil {
+		return err
+	}
+
+	if _, err = file.Write(buf); err != nil {
+		return err
+	}
+
+	return err
 }

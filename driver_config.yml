@@ -1,0 +1,4 @@
+src_path: /home/egor_usual/fsyncd/a
+dst_path: /home/egor_usual/fsyncd/b
+max_diff_percent: 30
+sync_time: "10:50:10"

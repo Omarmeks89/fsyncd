@@ -1,22 +1,11 @@
-# === general application settings like
 # host, port, docs addr etc
 host: 0.0.0.0
 port: 6767
 swagger_enabled: true
-
-# === swagger_port not required if swagger disabled
 swagger_port: 6768
 
-# === sync part
-# each path must exist
-src_path: /
-dst_path: /
-sync_time: "15:04:05"
-
-# difference percent between two directories
-# if diff is bigger than max_diff_percent, operation
-# will be break
-max_diff_percent: 35
+# possible drivers: default, vault
+config_driver: "default"
 
 # === connection timeouts
 conn_read_timeout: 10s

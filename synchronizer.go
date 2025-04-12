@@ -3,15 +3,12 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sync/errgroup"
 	"io"
 	"io/fs"
 	"os"
 	"runtime"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -368,38 +365,50 @@ func (s Synchronizer) fclose(log *logrus.Logger, file io.ReadWriteCloser) {
 	}
 }
 
+type Driver interface {
+	LoadSyncConfig() (c SyncConfig, err error)
+}
+
+// TimeGenerator generate intervals for repeat tasks
+type TimeGenerator interface {
+	GenerateInterval() (t time.Duration, err error)
+	SetupSyncTime(tm string) (err error)
+}
+
+// SyncScheduler for run synchronization by time
+type SyncScheduler struct {
+	d  Driver
+	tg TimeGenerator
+}
+
+// MakeScheduler factory
+func MakeScheduler(d Driver, tg TimeGenerator) (s SyncScheduler, err error) {
+	if tg == nil {
+		return s, err
+	}
+	return SyncScheduler{d: d, tg: tg}, err
+}
+
+// ChangeSyncTime set new sync time to generate
+func (s SyncScheduler) ChangeSyncTime(time string) (err error) {
+	// tg is a pointer, so we can change them (state)
+	return s.tg.SetupSyncTime(time)
+}
+
 // SyncByTimer infinite loop activated by timer and run sync operation.
 // If b (Block) is locked return error and wait next timer
-func SyncByTimer(
+func (s SyncScheduler) SyncByTimer(
 	ctx context.Context,
-	cfg *ServerConfig,
+	log *logrus.Logger,
 	b *Block,
 ) (err error) {
-
 	var tx time.Duration
-	var tm time.Time
+	var syncCfg SyncConfig
 
-	// read wished sync time (as '23:12:45' string) and set required
-	// hours, minutes and seconds as time.Duration inside
-	syncTimeGen := SyncTimeParser{}
-	if err = syncTimeGen.SetupInitialSyncTime(cfg.SyncTime); err != nil {
+	// create interval for timer
+	if tx, err = s.tg.GenerateInterval(); err != nil {
 		return err
 	}
-
-	// get local time
-	// TODO: wrap into top-level operation
-	if tm, err = syncTimeGen.GetUTCTime(); err != nil {
-		return err
-	}
-
-	// truncate by day
-	if tx, err = syncTimeGen.SetSyncTime(
-		tm,
-		tm.Truncate(24*time.Hour),
-	); err != nil {
-		return err
-	}
-	// sub current time from wished - we got current sync interval
 	t := time.NewTimer(tx)
 
 	// we may use go < 1.23, so we have to care about timers
@@ -408,175 +417,81 @@ func SyncByTimer(
 	for {
 		select {
 		case <-ctx.Done():
-			// ...
 			return ctx.Err()
 		case <-t.C:
-			// TODO: wrap into top-level operation
-			if b.Lock() {
-				// do operation
+			if syncCfg, err = s.d.LoadSyncConfig(); err != nil {
+				return err
+			}
 
+			// sync time may be changed, so we set new time each time we
+			// try to sync files
+			if err = s.ChangeSyncTime(syncCfg.SyncTime); err != nil {
+				return err
+			}
+
+			if b.Lock() {
+				// sync directories
+				err = SyncDirectories(ctx, log, syncCfg)
 				if !b.Unlock() {
 					panic("broken Block")
 				}
+
+				if err != nil {
+					return err
+				}
 			}
-			// ---------------------------------------
 
 			// not locked - any other sync running, let`s notify
 			// and wait next timer
 			// === time (set new interval for next sync)
-			// TODO: wrap into top-level operation
-			if tm, err = syncTimeGen.GetUTCTime(); err != nil {
-				return err
-			}
-			if tx, err = syncTimeGen.SetSyncTime(
-				tm,
-				tm.Truncate(24*time.Hour),
-			); err != nil {
-				return err
-			}
-			// -----------------------------------------------------------------
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				if tx, err = s.tg.GenerateInterval(); err != nil {
+					return err
+				}
+				log.WithFields(
+					logrus.Fields{
+						"stage":    "reset_timer",
+						"state":    "finished",
+						"interval": tx,
+					},
+				).Debug("reset sync interval")
 
-			if ok := t.Reset(cfg.GracefulShutdownTimeout); !ok {
-				return fmt.Errorf("broken synchronization timer")
+				t.Reset(tx)
 			}
-
-			t = time.NewTimer(tx)
 		}
+		time.Sleep(1 * time.Second)
 	}
 }
 
-// DefaultTimePartsSeparator to parse h, m, s
-const (
-	DefaultTimePartsSeparator = ":"
+// SyncDirectories build and run sync operation, is a top-level
+// function
+func SyncDirectories(
+	ctx context.Context,
+	log *logrus.Logger,
+	cfg SyncConfig,
+) (err error) {
+	var sm, dm SyncMeta
 
-	// numeric const section
-
-	// RequiredTimePartsCount is 3 for hours, minutes and seconds
-	RequiredTimePartsCount = 3
-
-	MinPossibleTimeValue   = 0
-	MaxPossibleHoursValue  = 23
-	MaxPossibleMinSecValue = 59
-)
-
-// SyncTimeParser for handle sync time
-type SyncTimeParser struct {
-	H time.Duration
-	M time.Duration
-	S time.Duration
-}
-
-// SetupInitialSyncTime convert time string (like 12:45:15) into numeric values
-// for hours, minutes and seconds
-func (stp *SyncTimeParser) SetupInitialSyncTime(tmFmt string) (err error) {
-	if stp == nil {
-		return fmt.Errorf("time parser not init")
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+		break
 	}
 
-	parts := strings.Split(tmFmt, DefaultTimePartsSeparator)
-	if len(parts) != RequiredTimePartsCount {
-		return fmt.Errorf("invalid time parts count")
-	}
-
-	if err = stp.SetHours(parts[0]); err != nil {
+	if sm, dm, err = HandlePaths(cfg.SrcPath, cfg.DstPath); err != nil {
 		return err
 	}
 
-	if err = stp.SetMinutes(parts[1]); err != nil {
+	syncCmd := MakeSyncCommand(cfg.MaxDiffPercent)
+	if err = syncCmd.Prepare(sm, dm); err != nil {
 		return err
 	}
 
-	if err = stp.SetSeconds(parts[2]); err != nil {
-		return err
-	}
-
-	return err
-}
-
-func (stp *SyncTimeParser) SetHours(h string) (err error) {
-	var hrs int
-
-	if stp == nil {
-		return fmt.Errorf("time parser not init")
-	}
-
-	if hrs, err = strconv.Atoi(h); err != nil {
-		return err
-	}
-
-	if hrs < MinPossibleTimeValue || hrs > MaxPossibleHoursValue {
-		return fmt.Errorf("hours have to be in between of 0 and 23")
-	}
-
-	// set hours as Duration
-	stp.H = time.Duration(hrs) * time.Hour
-	return err
-}
-
-func (stp *SyncTimeParser) SetMinutes(m string) (err error) {
-	var mns int
-
-	if stp == nil {
-		return fmt.Errorf("time parser not init")
-	}
-
-	if mns, err = strconv.Atoi(m); err != nil {
-		return err
-	}
-
-	if mns < MinPossibleTimeValue || mns > MaxPossibleMinSecValue {
-		return fmt.Errorf("minutes have to be in between of 0 and 59")
-	}
-
-	// set hours as Duration
-	stp.M = time.Duration(mns) * time.Minute
-	return err
-}
-
-func (stp *SyncTimeParser) SetSeconds(s string) (err error) {
-	var sec int
-
-	if stp == nil {
-		return fmt.Errorf("time parser not init")
-	}
-
-	if sec, err = strconv.Atoi(s); err != nil {
-		return err
-	}
-
-	if sec < MinPossibleTimeValue || sec > MaxPossibleMinSecValue {
-		return fmt.Errorf("seconds have to be in between of 0 and 59")
-	}
-
-	// set hours as Duration
-	stp.S = time.Duration(sec) * time.Second
-	return err
-}
-
-func (stp *SyncTimeParser) SetSyncTime(
-	origin time.Time,
-	truncated time.Time,
-) (t time.Duration, err error) {
-	if stp == nil {
-		return t, fmt.Errorf("time parser not init")
-	}
-
-	truncated.Add(stp.H)
-	truncated.Add(stp.M)
-	truncated.Add(stp.S)
-
-	if origin.After(truncated) {
-		// add 24 hours for truncated because it
-		// before current time
-		truncated.Add(24 * time.Hour)
-	}
-
-	return truncated.Sub(origin), err
-}
-
-func (stp *SyncTimeParser) GetUTCTime() (t time.Time, err error) {
-	if stp == nil {
-		return t, fmt.Errorf("time parser not init")
-	}
-	return time.Now().UTC(), err
+	// start sync
+	snc := MakeSynchronizer()
+	return snc.Sync(ctx, syncCmd, log)
 }

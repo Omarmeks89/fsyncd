@@ -63,9 +63,11 @@
 				
 				<option value="file3">github.com/Omarmeks89/fsyncd/main.go (0.0%)</option>
 				
-				<option value="file4">github.com/Omarmeks89/fsyncd/server.go (19.5%)</option>
+				<option value="file4">github.com/Omarmeks89/fsyncd/server.go (17.0%)</option>
 				
-				<option value="file5">github.com/Omarmeks89/fsyncd/synchronizer.go (11.8%)</option>
+				<option value="file5">github.com/Omarmeks89/fsyncd/synchronizer.go (0.0%)</option>
+				
+				<option value="file6">github.com/Omarmeks89/fsyncd/time_generator.go (45.8%)</option>
 				
 				</select>
 			</div>
@@ -84,7 +86,7 @@ package main
 
 import (
         "github.com/go-playground/validator/v10"
-        "github.com/stretchr/testify/assert/yaml"
+        "gopkg.in/yaml.v3"
         "io"
         "os"
         "sync"
@@ -93,6 +95,7 @@ import (
 
 // DefaultConfigName for detect config file
 const DefaultConfigName = "fsync.yml"
+const DriverConfigFilename = "driver_config.yml"
 
 // ServerConfig contains all required server parameters
 type ServerConfig struct {
@@ -104,15 +107,7 @@ type ServerConfig struct {
         SwaggerEnabled bool   `yaml:"swagger_enabled" validate:"required"`
         SwaggerPort    string `yaml:"swagger_port" validate:"numeric"`
 
-        // sync section
-        // 'dirpath' will fail if directory not exists
-        SrcPath        string `yaml:"src_path" validate:"required,dirpath"`
-        DstPath        string `yaml:"dst_path" validate:"required,dirpath"`
-        MaxDiffPercent int    `yaml:"max_diff_percent" validate:"required,gt=0,lte=100"`
-        SyncTime       string `yaml:"sync_time" validate:"required"`
-
-        // external data source
-        // ...
+        ConfigDriver string `yaml:"config_driver" validate:"required,oneof=vault default"`
 
         // connection settings
         ConnReadTimeout         time.Duration `yaml:"conn_read_timeout" validate:"required"`
@@ -148,7 +143,7 @@ func (sc *ServerConfig) Load() (err error) <span class="cov0" title="0">{
                 return err
         }</span>
 
-        <span class="cov0" title="0">if _, err = sc.Validate(); err != nil </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if err = sc.Validate(); err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
 
@@ -156,13 +151,91 @@ func (sc *ServerConfig) Load() (err error) <span class="cov0" title="0">{
 }
 
 // Validate config fields and return error if validation failed
-func (sc *ServerConfig) Validate() (ok bool, err error) <span class="cov0" title="0">{
+func (sc *ServerConfig) Validate() (err error) <span class="cov0" title="0">{
         v := validator.New(validator.WithRequiredStructEnabled())
         if err = v.Struct(sc); err != nil </span><span class="cov0" title="0">{
-                return ok, err
+                return err
         }</span>
 
-        <span class="cov0" title="0">return ok, err</span>
+        <span class="cov0" title="0">return err</span>
+}
+
+type SyncConfig struct {
+        SrcPath        string `yaml:"src_path" json:"src_path" validate:"required,dirpath"`
+        DstPath        string `yaml:"dst_path" json:"dst_path" validate:"required,dirpath,nefield=SrcPath"`
+        MaxDiffPercent int    `yaml:"max_diff_percent" json:"max_diff_percent" validate:"required,gt=0,lte=100"`
+        SyncTime       string `yaml:"sync_time" json:"sync_time" validate:"required"`
+}
+
+type DefaultConfigDriver struct{}
+
+func (d DefaultConfigDriver) LoadSyncConfig() (
+        c SyncConfig,
+        err error,
+) <span class="cov0" title="0">{
+        var file *os.File
+        var buf []byte
+
+        if file, err = os.Open(DriverConfigFilename); err != nil </span><span class="cov0" title="0">{
+                return c, err
+        }</span>
+
+        <span class="cov0" title="0">if buf, err = io.ReadAll(file); err != nil </span><span class="cov0" title="0">{
+                return c, err
+        }</span>
+
+        <span class="cov0" title="0">if err = yaml.Unmarshal(buf, &amp;c); err != nil </span><span class="cov0" title="0">{
+                return c, err
+        }</span>
+
+        <span class="cov0" title="0">if err = d.Validate(&amp;c); err != nil </span><span class="cov0" title="0">{
+                return c, err
+        }</span>
+
+        <span class="cov0" title="0">return c, err</span>
+}
+
+func (d DefaultConfigDriver) Validate(c *SyncConfig) (err error) <span class="cov0" title="0">{
+        vld := validator.New(validator.WithRequiredStructEnabled())
+        if err = vld.Struct(c); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
+}
+
+func (d DefaultConfigDriver) UpdateSyncConfig(nc SyncConfig) (err error) <span class="cov0" title="0">{
+        var buf []byte
+        var file *os.File
+        var stat os.FileInfo
+
+        if err = d.Validate(&amp;nc); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if stat, err = os.Stat(DriverConfigFilename); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // open file with same file mode
+        <span class="cov0" title="0">if file, err = os.OpenFile(
+                DriverConfigFilename,
+                os.O_RDWR|os.O_TRUNC,
+                stat.Mode(),
+        ); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+        <span class="cov0" title="0">defer file.Close()
+
+        if buf, err = yaml.Marshal(&amp;nc); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">if _, err = file.Write(buf); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">return err</span>
 }
 </pre>
 		
@@ -686,7 +759,19 @@ import (
         "context"
         "github.com/sirupsen/logrus"
         "golang.org/x/sync/errgroup"
+        "os/signal"
+        "syscall"
 )
+
+type ConfigDriver interface {
+        LoadSyncConfig() (c SyncConfig, err error)
+        UpdateSyncConfig(config SyncConfig) (err error)
+}
+
+// default drivers preset
+var cfgDrivers = map[string]ConfigDriver{
+        "default": DefaultConfigDriver{},
+}
 
 func main() <span class="cov0" title="0">{
         var cfg = new(ServerConfig)
@@ -694,7 +779,27 @@ func main() <span class="cov0" title="0">{
         var err error
         var server *Server
         var g errgroup.Group
+        var syncCfg SyncConfig
 
+        timeGen := SyncTimeGenerator{}
+        if err = timeGen.SetLocalTime(); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "set_locale",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+
+        <span class="cov0" title="0">logrus.WithFields(
+                logrus.Fields{
+                        "stage": "init",
+                        "state": "processing",
+                },
+        ).Infof("location set: %+v\n", timeGen.location)
+
+        // load master config for application
         if err = cfg.Load(); err != nil </span><span class="cov0" title="0">{
                 logrus.WithFields(
                         logrus.Fields{
@@ -715,6 +820,28 @@ func main() <span class="cov0" title="0">{
                 ).Fatal(err)
         }</span>
 
+        // load sync config
+        <span class="cov0" title="0">driver, ok := cfgDrivers[cfg.ConfigDriver]
+        if !ok </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "setup_sync_driver",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatalf("unsupported config driver '%s'\n", cfg.ConfigDriver)
+        }</span>
+
+        <span class="cov0" title="0">if syncCfg, err = driver.LoadSyncConfig(); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "setup_sync_settings",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+
         // create sync operation lock (block)
         <span class="cov0" title="0">block := MakeBlock()
         if server, err = MakeServer(cfg, logger, block); err != nil </span><span class="cov0" title="0">{
@@ -727,19 +854,63 @@ func main() <span class="cov0" title="0">{
                 ).Fatal(err)
         }</span>
 
-        <span class="cov0" title="0">ctx, cancel := context.WithCancel(context.Background())
-        defer cancel()
+        // make time generator for sync at wished time
+        <span class="cov0" title="0">if err = timeGen.SetupSyncTime(syncCfg.SyncTime); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage":    "setup_sync_interval",
+                                "state":    "failed",
+                                "interval": syncCfg.SyncTime,
+                                "error":    err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+
+        <span class="cov0" title="0">sCtx, stop := signal.NotifyContext(
+                context.Background(),
+                syscall.SIGINT,
+                syscall.SIGTERM,
+        )
+        defer stop()
+
+        // run sync at start
+        if err = SyncDirectories(sCtx, logger, syncCfg); err != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage":    "sync_at_start",
+                                "state":    "failed",
+                                "interval": syncCfg.SyncTime,
+                                "error":    err.Error(),
+                        },
+                ).Error(err)
+        }</span>
+
+        <span class="cov0" title="0">syncScheduler, sErr := MakeScheduler(driver, &amp;timeGen)
+        if sErr != nil </span><span class="cov0" title="0">{
+                logrus.WithFields(
+                        logrus.Fields{
+                                "stage": "run_server",
+                                "state": "failed",
+                                "error": err.Error(),
+                        },
+                ).Fatal(err)
+        }</span>
+        <span class="cov0" title="0">server.SetConfigDriver(driver)
 
         g.Go(
                 func() error </span><span class="cov0" title="0">{
-                        return server.Run(ctx)
+                        e := server.Run(sCtx)
+                        stop()
+                        return e
                 }</span>,
         )
 
         // run synchronization by timer
         <span class="cov0" title="0">g.Go(
                 func() error </span><span class="cov0" title="0">{
-                        return SyncByTimer(ctx, cfg, block)
+                        e := syncScheduler.SyncByTimer(sCtx, logger, block)
+                        stop()
+                        return e
                 }</span>,
         )
 
@@ -762,13 +933,12 @@ import (
         "context"
         "errors"
         "fmt"
+        "github.com/gin-contrib/cors"
         "github.com/gin-gonic/gin"
         "github.com/go-playground/validator/v10"
         "github.com/sirupsen/logrus"
         "net/http"
-        "os/signal"
         "sync"
-        "syscall"
 )
 
 var BrokenServer = fmt.Errorf("broken server")
@@ -820,12 +990,18 @@ func (b *Block) Unlock() bool <span class="cov8" title="1">{
         return b.isFree</span>
 }
 
+type LoaderUpdater interface {
+        LoadSyncConfig() (s SyncConfig, err error)
+        UpdateSyncConfig(config SyncConfig) (err error)
+}
+
 // Server used for handle API
 type Server struct {
         g   *gin.Engine
         b   *Block
         log *logrus.Logger
         cfg *ServerConfig
+        d   LoaderUpdater
 }
 
 // MakeServer factory function for create new server to handle API
@@ -849,23 +1025,18 @@ func MakeServer(cfg *ServerConfig, log *logrus.Logger, b *Block) (
         }, err</span>
 }
 
+func (srv *Server) SetConfigDriver(d LoaderUpdater) <span class="cov0" title="0">{
+        srv.d = d
+}</span>
+
 // HandleSyncCommand handle unscheduled used command.
 // Return http status 409 if operation running
 func (srv *Server) HandleSyncCommand(c *gin.Context) <span class="cov0" title="0">{
         var syncReq SyncDirectoriesRequest
-        var sm, dm SyncMeta
         var err error
 
-        if srv == nil </span><span class="cov0" title="0">{
-                _ = c.AbortWithError(
-                        http.StatusInternalServerError,
-                        BrokenServer,
-                )
-                return
-        }</span>
-
         // Validate request
-        <span class="cov0" title="0">if err = c.BindJSON(&amp;syncReq); err != nil </span><span class="cov0" title="0">{
+        if err = c.BindJSON(&amp;syncReq); err != nil </span><span class="cov0" title="0">{
                 _ = c.AbortWithError(http.StatusBadRequest, err)
                 return
         }</span>
@@ -890,49 +1061,87 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) <span class="cov0" title="0
                 }
         }()
 
-        // we take a lock let`s handle command
-        <span class="cov0" title="0">if sm, dm, err = HandlePaths(syncReq.SrcPath, syncReq.DstPath); err != nil </span><span class="cov0" title="0">{
+        // root directories have to be different
+        <span class="cov0" title="0">if syncReq.SrcPath == syncReq.DstPath </span><span class="cov0" title="0">{
                 _ = c.AbortWithError(
-                        http.StatusInternalServerError,
-                        fmt.Errorf("invalid paths"),
+                        http.StatusBadRequest,
+                        fmt.Errorf("equal sync path"),
                 )
                 return
         }</span>
 
-        <span class="cov0" title="0">syncCmd := MakeSyncCommand(syncReq.MaxDiffPercent)
-        if err = syncCmd.Prepare(sm, dm); err != nil </span><span class="cov0" title="0">{
-                _ = c.AbortWithError(http.StatusInternalServerError, err)
-                return
-        }</span>
+        // we take a lock let`s handle command
+        <span class="cov0" title="0">scfg := SyncConfig{
+                SrcPath:        syncReq.SrcPath,
+                DstPath:        syncReq.DstPath,
+                MaxDiffPercent: syncReq.MaxDiffPercent,
+        }
 
-        // start sync
-        <span class="cov0" title="0">snc := MakeSynchronizer()
-        if err = snc.Sync(context.Background(), syncCmd, srv.log); err != nil </span><span class="cov0" title="0">{
+        ctx := context.Background()
+        if err = SyncDirectories(ctx, srv.log, scfg); err != nil </span><span class="cov0" title="0">{
                 _ = c.AbortWithError(http.StatusInternalServerError, err)
-                return
         }</span>
 }
 
 // UpdateConfiguration command for update server sync configuration
 func (srv *Server) UpdateConfiguration(c *gin.Context) <span class="cov0" title="0">{
-        c.IndentedJSON(http.StatusOK, 200)
-}</span>
+        var sCfg ChangeSyncConfig
+        var err error
 
+        // Validate request
+        if err = c.BindJSON(&amp;sCfg); err != nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(http.StatusBadRequest, err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">vld := validator.New(validator.WithRequiredStructEnabled())
+        if err = vld.Struct(&amp;sCfg); err != nil </span><span class="cov0" title="0">{
+                c.AbortWithStatus(http.StatusBadRequest)
+                return
+        }</span>
+
+        <span class="cov0" title="0">syncConfig := SyncConfig{
+                SrcPath:        sCfg.SrcPath,
+                DstPath:        sCfg.DstPath,
+                SyncTime:       sCfg.SyncTime,
+                MaxDiffPercent: sCfg.MaxDiffPercent,
+        }
+
+        if err = srv.d.UpdateSyncConfig(syncConfig); err != nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(http.StatusInternalServerError, err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">c.IndentedJSON(http.StatusOK, 200)</span>
+}
+
+// GetCurrentConfig return current synchronization config
 func (srv *Server) GetCurrentConfig(c *gin.Context) <span class="cov0" title="0">{
+        var cfg SyncConfig
+        var err error
+
+        if cfg, err = srv.d.LoadSyncConfig(); err != nil </span><span class="cov0" title="0">{
+                _ = c.AbortWithError(http.StatusInternalServerError, err)
+                return
+        }</span>
+
+        <span class="cov0" title="0">c.IndentedJSON(http.StatusOK, cfg)</span>
+}
+
+// Health for lifecycle handling
+func (srv *Server) Health(c *gin.Context) <span class="cov0" title="0">{
         c.IndentedJSON(http.StatusOK, 200)
 }</span>
 
 // Run server
 func (srv *Server) Run(ctx context.Context) (err error) <span class="cov0" title="0">{
-        if srv == nil </span><span class="cov0" title="0">{
-                return BrokenServer
+        // setup gin router
+
+        if srv.d == nil </span><span class="cov0" title="0">{
+                return fmt.Errorf("config driver not set")
         }</span>
 
-        <span class="cov0" title="0">sCtx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
-        defer stop()
-
-        // setup gin router
-        if err = srv.setup(); err != nil </span><span class="cov0" title="0">{
+        <span class="cov0" title="0">if err = srv.setup(); err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
 
@@ -953,8 +1162,7 @@ func (srv *Server) Run(ctx context.Context) (err error) <span class="cov0" title
                 }</span>
         }()
 
-        <span class="cov0" title="0">&lt;-sCtx.Done()
-        stop()
+        <span class="cov0" title="0">&lt;-ctx.Done()
 
         srv.log.Debugf("shutting down gracefully, press Ctrl + C to force")
 
@@ -978,14 +1186,29 @@ func (srv *Server) setup() (err error) <span class="cov0" title="0">{
 
         srv.g = gin.Default()
 
+        // setup CORS
+        srv.g.Use(
+                cors.New(
+                        cors.Config{
+                                AllowPrivateNetwork: true,
+                                AllowHeaders:        srv.cfg.AllowedHeaders,
+                                AllowMethods:        srv.cfg.AllowedMethods,
+                                AllowOrigins:        srv.cfg.AllowedHosts,
+                        },
+                ),
+        )
+
         // register sync handler
         srv.g.PATCH("/api/v1/sync/directories", srv.HandleSyncCommand)
 
         // register handler for update server config
-        srv.g.PATCH("/api/v1/server/config/update", srv.UpdateConfiguration)
+        srv.g.PATCH("/api/v1/sync/config/update", srv.UpdateConfiguration)
 
         // register handler for return actual server config
-        srv.g.GET("/api/v1/server/config", srv.GetCurrentConfig)
+        srv.g.GET("/api/v1/sync/config", srv.GetCurrentConfig)
+
+        // register /health endpoint for control
+        srv.g.GET("/api/v1/health", srv.Health)
 
         return err
 }</span>
@@ -996,15 +1219,12 @@ package main
 
 import (
         "context"
-        "fmt"
         "github.com/sirupsen/logrus"
         "golang.org/x/sync/errgroup"
         "io"
         "io/fs"
         "os"
         "runtime"
-        "strconv"
-        "strings"
         "time"
 )
 
@@ -1361,66 +1581,51 @@ func (s Synchronizer) fclose(log *logrus.Logger, file io.ReadWriteCloser) <span 
         }</span>
 }
 
+type Driver interface {
+        LoadSyncConfig() (c SyncConfig, err error)
+}
+
+// TimeGenerator generate intervals for repeat tasks
+type TimeGenerator interface {
+        GenerateInterval() (t time.Duration, err error)
+        SetupSyncTime(tm string) (err error)
+}
+
+// SyncScheduler for run synchronization by time
+type SyncScheduler struct {
+        d  Driver
+        tg TimeGenerator
+}
+
+// MakeScheduler factory
+func MakeScheduler(d Driver, tg TimeGenerator) (s SyncScheduler, err error) <span class="cov0" title="0">{
+        if tg == nil </span><span class="cov0" title="0">{
+                return s, err
+        }</span>
+        <span class="cov0" title="0">return SyncScheduler{d: d, tg: tg}, err</span>
+}
+
+// ChangeSyncTime set new sync time to generate
+func (s SyncScheduler) ChangeSyncTime(time string) (err error) <span class="cov0" title="0">{
+        // tg is a pointer, so we can change them (state)
+        return s.tg.SetupSyncTime(time)
+}</span>
+
 // SyncByTimer infinite loop activated by timer and run sync operation.
 // If b (Block) is locked return error and wait next timer
-func SyncByTimer(
+func (s SyncScheduler) SyncByTimer(
         ctx context.Context,
-        cfg *ServerConfig,
+        log *logrus.Logger,
         b *Block,
 ) (err error) <span class="cov0" title="0">{
+        var tx time.Duration
+        var syncCfg SyncConfig
 
-        var hrs, mns, sec int
-
-        // get local time
-        tm := time.Now().UTC()
-
-        // truncate by day
-        tx := tm.Truncate(24 * time.Hour)
-        parts := strings.Split(cfg.SyncTime, ":")
-        if len(parts) &lt; 3 </span><span class="cov0" title="0">{
-                return fmt.Errorf("invalid time preset")
-        }</span>
-
-        // handle hours
-        <span class="cov0" title="0">if hrs, err = strconv.Atoi(parts[0]); err != nil </span><span class="cov0" title="0">{
+        // create interval for timer
+        if tx, err = s.tg.GenerateInterval(); err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
-
-        <span class="cov0" title="0">if hrs &lt; 0 || hrs &gt; 23 </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov0" title="0">tx.Add(time.Duration(hrs) * time.Hour)
-
-        // handle minutes
-        if mns, err = strconv.Atoi(parts[1]); err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov0" title="0">if mns &lt; 0 || mns &gt; 59 </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov0" title="0">tx.Add(time.Duration(mns) * time.Minute)
-
-        // handle seconds
-        if sec, err = strconv.Atoi(parts[1]); err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov0" title="0">if sec &lt; 0 || mns &gt; 59 </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov0" title="0">tx.Add(time.Duration(sec) * time.Second)
-
-        if tm.After(tx) </span><span class="cov0" title="0">{
-                // add 24 hours for tx
-                tx.Add(24 * time.Hour)
-        }</span>
-
-        // sub current time from wished - we got current sync interval
-        <span class="cov0" title="0">t := time.NewTimer(tx.Sub(tm))
+        <span class="cov0" title="0">t := time.NewTimer(tx)
 
         // we may use go &lt; 1.23, so we have to care about timers
         defer t.Stop()
@@ -1428,28 +1633,97 @@ func SyncByTimer(
         for </span><span class="cov0" title="0">{
                 select </span>{
                 case &lt;-ctx.Done():<span class="cov0" title="0">
-                        // ...
                         return ctx.Err()</span>
                 case &lt;-t.C:<span class="cov0" title="0">
-                        if b.Lock() </span>{<span class="cov0" title="0">
-                                // do operation
+                        if syncCfg, err = s.d.LoadSyncConfig(); err != nil </span><span class="cov0" title="0">{
+                                return err
                         }</span>
+
+                        // sync time may be changed, so we set new time each time we
+                        // try to sync files
+                        <span class="cov0" title="0">if err = s.ChangeSyncTime(syncCfg.SyncTime); err != nil </span><span class="cov0" title="0">{
+                                return err
+                        }</span>
+
+                        <span class="cov0" title="0">if b.Lock() </span><span class="cov0" title="0">{
+                                // sync directories
+                                err = SyncDirectories(ctx, log, syncCfg)
+                                if !b.Unlock() </span><span class="cov0" title="0">{
+                                        panic("broken Block")</span>
+                                }
+
+                                <span class="cov0" title="0">if err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+                        }
 
                         // not locked - any other sync running, let`s notify
                         // and wait next timer
-                        // ...
+                        // === time (set new interval for next sync)
+                        <span class="cov0" title="0">select </span>{
+                        case &lt;-ctx.Done():<span class="cov0" title="0">
+                                return ctx.Err()</span>
+                        default:<span class="cov0" title="0">
+                                if tx, err = s.tg.GenerateInterval(); err != nil </span><span class="cov0" title="0">{
+                                        return err
+                                }</span>
+                                <span class="cov0" title="0">log.WithFields(
+                                        logrus.Fields{
+                                                "stage":    "reset_timer",
+                                                "state":    "finished",
+                                                "interval": tx,
+                                        },
+                                ).Debug("reset sync interval")
 
-                        // === time
-                        // truncate by 24 h
-                        // add h, m, s from preset
-                        // sub time.Now() from new time -&gt; got new interval
-
-                        <span class="cov0" title="0">if ok := t.Reset(cfg.GracefulShutdownTimeout); !ok </span><span class="cov0" title="0">{
-                                return fmt.Errorf("broken synchronization timer")
-                        }</span>
+                                t.Reset(tx)</span>
+                        }
                 }
+                <span class="cov0" title="0">time.Sleep(1 * time.Second)</span>
         }
 }
+
+// SyncDirectories build and run sync operation, is a top-level
+// function
+func SyncDirectories(
+        ctx context.Context,
+        log *logrus.Logger,
+        cfg SyncConfig,
+) (err error) <span class="cov0" title="0">{
+        var sm, dm SyncMeta
+
+        select </span>{
+        case &lt;-ctx.Done():<span class="cov0" title="0">
+                return ctx.Err()</span>
+        default:<span class="cov0" title="0">
+                break</span>
+        }
+
+        <span class="cov0" title="0">if sm, dm, err = HandlePaths(cfg.SrcPath, cfg.DstPath); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">syncCmd := MakeSyncCommand(cfg.MaxDiffPercent)
+        if err = syncCmd.Prepare(sm, dm); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        // start sync
+        <span class="cov0" title="0">snc := MakeSynchronizer()
+        return snc.Sync(ctx, syncCmd, log)</span>
+}
+</pre>
+		
+		<pre class="file" id="file6" style="display: none">// package contains type for handle synchronization time
+
+package main
+
+import (
+        "fmt"
+        "os"
+        "strconv"
+        "strings"
+        "time"
+)
 
 // DefaultTimePartsSeparator to parse h, m, s
 const (
@@ -1465,103 +1739,135 @@ const (
         MaxPossibleMinSecValue = 59
 )
 
-// SyncTimeParser for handle sync time
-type SyncTimeParser struct {
-        H time.Duration
-        M time.Duration
-        S time.Duration
+// SyncTimeGenerator for handle sync time
+type SyncTimeGenerator struct {
+        H        int
+        M        int
+        S        int
+        location *time.Location
 }
 
-// SetupInitialSyncTime convert time string (like 12:45:15) into numeric values
+// SetupSyncTime convert time string (like 12:45:15) into numeric values
 // for hours, minutes and seconds
-func (stp *SyncTimeParser) SetupInitialSyncTime(tmFmt string) (err error) <span class="cov0" title="0">{
-        if stp == nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("time parser not init")
-        }</span>
+func (stp *SyncTimeGenerator) SetupSyncTime(tmFmt string) (err error) <span class="cov8" title="1">{
 
-        <span class="cov0" title="0">parts := strings.Split(tmFmt, DefaultTimePartsSeparator)
-        if len(parts) &lt; RequiredTimePartsCount </span><span class="cov0" title="0">{
+        parts := strings.Split(tmFmt, DefaultTimePartsSeparator)
+        if len(parts) != RequiredTimePartsCount </span><span class="cov8" title="1">{
                 return fmt.Errorf("invalid time parts count")
         }</span>
 
-        <span class="cov0" title="0">if err = stp.SetHours(parts[0]); err != nil </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">if err = stp.SetHours(parts[0]); err != nil </span><span class="cov8" title="1">{
                 return err
         }</span>
 
-        <span class="cov0" title="0">if err = stp.SetMinutes(parts[1]); err != nil </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">if err = stp.SetMinutes(parts[1]); err != nil </span><span class="cov8" title="1">{
                 return err
         }</span>
 
-        <span class="cov0" title="0">if err = stp.SetSeconds(parts[2]); err != nil </span><span class="cov0" title="0">{
+        <span class="cov8" title="1">if err = stp.SetSeconds(parts[2]); err != nil </span><span class="cov8" title="1">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">return err</span>
+}
+
+// SetHours (int) from time string
+func (stp *SyncTimeGenerator) SetHours(h string) (err error) <span class="cov8" title="1">{
+        if stp.H, err = strconv.Atoi(h); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if stp.H &lt; MinPossibleTimeValue || stp.H &gt; MaxPossibleHoursValue </span><span class="cov8" title="1">{
+                return fmt.Errorf("hours have to be in between of 0 and 23")
+        }</span>
+
+        <span class="cov8" title="1">return err</span>
+}
+
+// SetMinutes (int) from time string
+func (stp *SyncTimeGenerator) SetMinutes(m string) (err error) <span class="cov8" title="1">{
+        if stp.M, err = strconv.Atoi(m); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if stp.M &lt; MinPossibleTimeValue || stp.M &gt; MaxPossibleMinSecValue </span><span class="cov8" title="1">{
+                return fmt.Errorf("minutes have to be in between of 0 and 59")
+        }</span>
+
+        <span class="cov8" title="1">return err</span>
+}
+
+func (stp *SyncTimeGenerator) SetSeconds(s string) (err error) <span class="cov8" title="1">{
+        if stp.S, err = strconv.Atoi(s); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov8" title="1">if stp.S &lt; MinPossibleTimeValue || stp.S &gt; MaxPossibleMinSecValue </span><span class="cov8" title="1">{
+                return fmt.Errorf("seconds have to be in between of 0 and 59")
+        }</span>
+        <span class="cov8" title="1">return err</span>
+}
+
+// SetSyncTime from current time
+func (stp *SyncTimeGenerator) SetSyncTime(origin time.Time) (
+        t time.Duration,
+        err error,
+) <span class="cov0" title="0">{
+        // set basic time
+        y, m, day := origin.Date()
+        tSync := time.Date(y, m, day, stp.H, stp.M, stp.S, 0, stp.location)
+
+        if origin.After(tSync) </span><span class="cov0" title="0">{
+                // add 24 hours for truncated because it before current time
+                tSync = tSync.Add(24 * time.Hour)
+        }</span>
+
+        <span class="cov0" title="0">return tSync.Sub(origin), err</span>
+}
+
+// GetLocalTime get time for current location (timezone)
+func (stp *SyncTimeGenerator) GetLocalTime() (t time.Time, err error) <span class="cov0" title="0">{
+        if stp.location == nil </span><span class="cov0" title="0">{
+                // we have to set local time
+                if err = stp.SetLocalTime(); err != nil </span><span class="cov0" title="0">{
+                        return t, err
+                }</span>
+        }
+
+        <span class="cov0" title="0">return time.Now().Local(), err</span>
+}
+
+// GenerateInterval for repeat wished operation (or set timer object)
+func (stp *SyncTimeGenerator) GenerateInterval() (d time.Duration, err error) <span class="cov0" title="0">{
+        var tm time.Time
+
+        if tm, err = stp.GetLocalTime(); err != nil </span><span class="cov0" title="0">{
+                return d, err
+        }</span>
+
+        <span class="cov0" title="0">return stp.SetSyncTime(tm)</span>
+}
+
+// SetLocalTime from OS settings (/etc/localtime)
+func (stp *SyncTimeGenerator) SetLocalTime() (err error) <span class="cov0" title="0">{
+        var link, location string
+
+        if link, err = os.Readlink("/etc/localtime"); err != nil </span><span class="cov0" title="0">{
+                return err
+        }</span>
+
+        <span class="cov0" title="0">parts := strings.Split(link, "/")
+        if len(parts) &lt; 2 </span><span class="cov0" title="0">{
+                return fmt.Errorf("broken localtime description '%s'\n", link)
+        }</span>
+
+        <span class="cov0" title="0">location = strings.Join(parts[len(parts)-2:], "/")
+        if stp.location, err = time.LoadLocation(location); err != nil </span><span class="cov0" title="0">{
                 return err
         }</span>
 
         <span class="cov0" title="0">return err</span>
 }
-
-func (stp *SyncTimeParser) SetHours(h string) (err error) <span class="cov8" title="1">{
-        var hrs int
-
-        if stp == nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("time parser not init")
-        }</span>
-
-        <span class="cov8" title="1">if hrs, err = strconv.Atoi(h); err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov8" title="1">if hrs &lt; MinPossibleTimeValue || hrs &gt; MaxPossibleHoursValue </span><span class="cov8" title="1">{
-                return fmt.Errorf("hours have to be in between of 0 and 23")
-        }</span>
-
-        // set hours as Duration
-        <span class="cov8" title="1">stp.H = time.Duration(hrs) * time.Hour
-        return err</span>
-}
-
-func (stp *SyncTimeParser) SetMinutes(m string) (err error) <span class="cov8" title="1">{
-        var mns int
-
-        if stp == nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("time parser not init")
-        }</span>
-
-        <span class="cov8" title="1">if mns, err = strconv.Atoi(m); err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov8" title="1">if mns &lt; MinPossibleTimeValue || mns &gt; MaxPossibleMinSecValue </span><span class="cov8" title="1">{
-                return fmt.Errorf("minutes have to be in between of 0 and 59")
-        }</span>
-
-        // set hours as Duration
-        <span class="cov8" title="1">stp.M = time.Duration(mns) * time.Minute
-        return err</span>
-}
-
-func (stp *SyncTimeParser) SetSeconds(s string) (err error) <span class="cov8" title="1">{
-        var sec int
-
-        if stp == nil </span><span class="cov0" title="0">{
-                return fmt.Errorf("time parser not init")
-        }</span>
-
-        <span class="cov8" title="1">if sec, err = strconv.Atoi(s); err != nil </span><span class="cov0" title="0">{
-                return err
-        }</span>
-
-        <span class="cov8" title="1">if sec &lt; MinPossibleTimeValue || sec &gt; MaxPossibleMinSecValue </span><span class="cov8" title="1">{
-                return fmt.Errorf("seconds have to be in between of 0 and 59")
-        }</span>
-
-        // set hours as Duration
-        <span class="cov8" title="1">stp.M = time.Duration(sec) * time.Second
-        return err</span>
-}
-
-func (stp *SyncTimeParser) GetSyncInterval(tm time.Time) time.Duration <span class="cov0" title="0">{
-        return 1 * time.Second
-}</span>
 </pre>
 		
 		</div>
