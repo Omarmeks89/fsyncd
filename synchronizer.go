@@ -30,55 +30,24 @@ func (s Synchronizer) Sync(
 	gp := s.CalculatePoolSize()
 
 	// delete directories
-	log.WithFields(
-		logrus.Fields{
-			"stage": "remove_dirs",
-			"state": "processing",
-		},
-	).Debug("deleting directories")
 	if err = s.DeleteDirectories(ctx, syncCmd, gp); err != nil {
 		return err
 	}
 
 	// delete files
-	log.WithFields(
-		logrus.Fields{
-			"stage": "remove_files",
-			"state": "processing",
-		},
-	).Debug("deleting files")
 	if err = s.DeleteFiles(ctx, syncCmd, gp); err != nil {
 		return err
 	}
 
 	// create directories
-	log.WithFields(
-		logrus.Fields{
-			"stage": "create_new_dirs",
-			"state": "processing",
-		},
-	).Debug("creating directories")
 	if err = s.CreateDirectories(ctx, syncCmd, gp); err != nil {
 		return err
 	}
 
 	// sync files
-	log.WithFields(
-		logrus.Fields{
-			"stage": "sync_files",
-			"state": "processing",
-		},
-	).Debug("sync files")
 	if err = s.SyncFiles(ctx, log, syncCmd, gp); err != nil {
 		return err
 	}
-
-	log.WithFields(
-		logrus.Fields{
-			"stage": "synchronized",
-			"state": "success",
-		},
-	).Debug("synchronization exited")
 	return err
 }
 
@@ -365,6 +334,7 @@ func (s Synchronizer) fclose(log *logrus.Logger, file io.ReadWriteCloser) {
 	}
 }
 
+// Driver used for load synchronization parameters specified by driver
 type Driver interface {
 	LoadSyncConfig() (c SyncConfig, err error)
 }
@@ -410,8 +380,6 @@ func (s SyncScheduler) SyncByTimer(
 		return err
 	}
 	t := time.NewTimer(tx)
-
-	// we may use go < 1.23, so we have to care about timers
 	defer t.Stop()
 
 	for {
@@ -466,8 +434,7 @@ func (s SyncScheduler) SyncByTimer(
 	}
 }
 
-// SyncDirectories build and run sync operation, is a top-level
-// function
+// SyncDirectories build and run sync operation
 func SyncDirectories(
 	ctx context.Context,
 	log *logrus.Logger,

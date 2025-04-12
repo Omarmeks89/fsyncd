@@ -133,15 +133,6 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) {
 		}
 	}()
 
-	// root directories have to be different
-	if syncReq.SrcPath == syncReq.DstPath {
-		_ = c.AbortWithError(
-			http.StatusBadRequest,
-			fmt.Errorf("equal sync path"),
-		)
-		return
-	}
-
 	// we take a lock let`s handle command
 	scfg := SyncConfig{
 		SrcPath:        syncReq.SrcPath,

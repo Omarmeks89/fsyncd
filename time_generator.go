@@ -12,6 +12,9 @@ import (
 
 // DefaultTimePartsSeparator to parse h, m, s
 const (
+	// OSLocalTimeLink is used for setup local time from OS
+	OSLocalTimeLink           = "/etc/localtime"
+	OSLinkDefaultSeparator    = "/"
 	DefaultTimePartsSeparator = ":"
 
 	// numeric const section
@@ -137,16 +140,16 @@ func (stp *SyncTimeGenerator) GenerateInterval() (d time.Duration, err error) {
 func (stp *SyncTimeGenerator) SetLocalTime() (err error) {
 	var link, location string
 
-	if link, err = os.Readlink("/etc/localtime"); err != nil {
+	if link, err = os.Readlink(OSLocalTimeLink); err != nil {
 		return err
 	}
 
-	parts := strings.Split(link, "/")
+	parts := strings.Split(link, OSLinkDefaultSeparator)
 	if len(parts) < 2 {
 		return fmt.Errorf("broken localtime description '%s'\n", link)
 	}
 
-	location = strings.Join(parts[len(parts)-2:], "/")
+	location = strings.Join(parts[len(parts)-2:], OSLinkDefaultSeparator)
 	if stp.location, err = time.LoadLocation(location); err != nil {
 		return err
 	}
