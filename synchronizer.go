@@ -1,4 +1,5 @@
 // Contains Synchronizer type for handle SyncCommand
+// Is responsible on top-level sync operations
 package main
 
 import (
@@ -97,7 +98,7 @@ func (s Synchronizer) CreateDirectories(
 	)
 }
 
-// syncPair sync files pair
+// syncPair sync files pair from src to dest
 func (s Synchronizer) syncPair(
 	ctx context.Context,
 	log *logrus.Logger,

@@ -13,8 +13,6 @@ import (
 	"sync"
 )
 
-var BrokenServer = fmt.Errorf("broken server")
-
 // Block is used to avoid long time in mutex
 type Block struct {
 	lock   *sync.RWMutex
@@ -217,10 +215,8 @@ func (srv *Server) Run(ctx context.Context) (err error) {
 	}
 
 	go func() {
-		if err = server.ListenAndServe(); err != nil && !errors.Is(
-			err,
-			http.ErrServerClosed,
-		) {
+		err = server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			srv.log.Error(err)
 		}
 	}()
