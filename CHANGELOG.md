@@ -1,7 +1,7 @@
 <!-- insertion marker -->
-## Unreleased
+## [v0.1.0-0](https://github.com/Omarmeks89/fsyncd/releases/tag/v0.1.0-0) - 2025-04-21
 
-<small>[Compare with latest](https://github.com/Omarmeks89/fsyncd/compare/5d8003c1e1ee6840838a70861f9c5d43f3986b87...HEAD)</small>
+<small>[Compare with first commit](https://github.com/Omarmeks89/fsyncd/compare/5d8003c1e1ee6840838a70861f9c5d43f3986b87...v0.1.0-0)</small>
 
 ### Build
 
@@ -37,5 +37,3 @@
 
 - add tests for SyncTimeParser, fix previous tests ([a99987c](https://github.com/Omarmeks89/fsyncd/commit/a99987c9f8991a8ab0823135f36a757c95e25761) by Егор Марков).
 - add test for signal error check, fix previous tests ([88f5b7f](https://github.com/Omarmeks89/fsyncd/commit/88f5b7ffc85eb9bc018d735e07cada8b7837268c) by Егор Марков).
-
-<!-- insertion marker -->

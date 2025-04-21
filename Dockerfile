@@ -17,16 +17,11 @@ RUN CGO_ENABLED=0 go build -trimpath -o /fsyncd
 
 FROM build-stage AS bs
 
-WORKDIR /
-COPY --from=build-stage /fsyncd /fsyncd
-COPY --from=build-stage /usr    /usr
-COPY --from=build-stage /etc    /etc
-
 # set owner
 RUN chown fsyncd:fsyncd /fsyncd
 USER fsyncd
 
 FROM scratch
-COPY --from=bs /fsyncd /fsyncd
-COPY --from=bs /usr    /usr
-COPY --from=bs /etc    /etc
+COPY --from=build-stage /fsyncd /fsyncd
+COPY --from=build-stage /usr    /usr
+COPY --from=build-stage /etc    /etc

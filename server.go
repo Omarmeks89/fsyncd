@@ -60,6 +60,8 @@ func (b *Block) Unlock() bool {
 	return b.isFree
 }
 
+// LoaderUpdater implements driver behaviour to operate with
+// sync source (local file, vault, etc.)
 type LoaderUpdater interface {
 	LoadSyncConfig() (s SyncConfig, err error)
 	UpdateSyncConfig(config SyncConfig) (err error)

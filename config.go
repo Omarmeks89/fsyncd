@@ -42,6 +42,11 @@ type ServerConfig struct {
 	TimeFormat string `yaml:"time_format" validate:"required"`
 	LogLevel   string `yaml:"log_level" validate:"required"`
 
+	// TLS settings
+	TlsProto    string `yaml:"tls_proto"`
+	TlsCertPath string `yaml:"tls_cert_path"`
+	TlsKeyPath  string `yaml:"tls_key_path"`
+
 	lock *sync.RWMutex
 }
 
@@ -79,6 +84,8 @@ func (sc *ServerConfig) Validate() (err error) {
 	return err
 }
 
+// SyncConfig is used for define synchronization credentials like paths,
+// difference etc.
 type SyncConfig struct {
 	SrcPath        string `yaml:"src_path" json:"src_path" validate:"required,dirpath"`
 	DstPath        string `yaml:"dst_path" json:"dst_path" validate:"required,dirpath,nefield=SrcPath"`
@@ -86,6 +93,8 @@ type SyncConfig struct {
 	SyncTime       string `yaml:"sync_time" json:"sync_time" validate:"required"`
 }
 
+// DefaultConfigDriver is a driver that read data from
+// local config file (driver_config.yml)
 type DefaultConfigDriver struct{}
 
 func (d DefaultConfigDriver) LoadSyncConfig() (

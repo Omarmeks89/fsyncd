@@ -24,3 +24,8 @@ time_format: "15:04:05 02-01-2006"
 # allowed: INFO, WARN, DEBUG, ERROR, PANIC, FATAL
 # (case-insensitive)
 log_level: debug
+
+# === TLS Settings
+tls_proto: TLS_v1.3
+tls_cert_path: ""
+tls_key_path: ""
