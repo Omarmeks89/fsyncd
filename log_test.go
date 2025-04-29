@@ -56,7 +56,7 @@ func Test_convertLogLevel(t *testing.T) {
 			level:   "ANY",
 			wantL:   logrus.Level(128),
 			wantErr: true,
-			err:     UnexpectedLevel,
+			err:     ErrUnexpectedLevel,
 		},
 	}
 	for _, tt := range tests {

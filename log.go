@@ -17,7 +17,7 @@ const (
 	FatalLevel = "fatal"
 )
 
-var UnexpectedLevel = fmt.Errorf("unexpected level")
+var ErrUnexpectedLevel = fmt.Errorf("unexpected level")
 
 // SetupLogger return new logger
 func SetupLogger(level string, tmFmt string) (log *logrus.Logger, err error) {
@@ -53,6 +53,6 @@ func convertLogLevel(level string) (l logrus.Level, err error) {
 	case FatalLevel:
 		return logrus.FatalLevel, err
 	default:
-		return logrus.Level(128), UnexpectedLevel
+		return logrus.Level(128), ErrUnexpectedLevel
 	}
 }

@@ -371,7 +371,7 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 		err  error
 	}{
 		{
-			name: "test return signal error (TooLargeDifferenceErr)",
+			name: "test return signal error (ErrTooLargeDifferenceErr)",
 			src: SyncMeta{
 				Dirs: map[string]Directory{
 					"sync-dir": {
@@ -410,7 +410,7 @@ func TestSyncCommand_PrepareReturnError(t *testing.T) {
 					},
 				},
 			},
-			err: TooLargeDifferenceErr,
+			err: ErrTooLargeDifferenceErr,
 		},
 	}
 	for _, tt := range tests {

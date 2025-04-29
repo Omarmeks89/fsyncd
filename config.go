@@ -2,11 +2,10 @@
 package main
 
 import (
-	"github.com/go-playground/validator/v10"
-	"gopkg.in/yaml.v3"
+	validator "github.com/go-playground/validator/v10"
+	yaml "gopkg.in/yaml.v3"
 	"io"
 	"os"
-	"sync"
 	"time"
 )
 
@@ -53,8 +52,6 @@ type ServerConfig struct {
 	TlsProto    string `yaml:"tls_proto"`
 	TlsCertPath string `yaml:"tls_cert_path"`
 	TlsKeyPath  string `yaml:"tls_key_path"`
-
-	lock *sync.RWMutex
 }
 
 // Load parameters from config file and setup config
@@ -160,7 +157,7 @@ func (d DefaultConfigDriver) UpdateSyncConfig(nc SyncConfig) (err error) {
 	); err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	if buf, err = yaml.Marshal(&nc); err != nil {
 		return err

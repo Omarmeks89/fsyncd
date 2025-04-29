@@ -9,8 +9,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // DefaultBufferSize for intermediate buffer
@@ -24,7 +22,7 @@ const DefaultSyncObjectsSize = 16
 // DefaultRootDirMask default name for masked directories
 const DefaultRootDirMask = "%-m-%"
 
-var TooLargeDifferenceErr = fmt.Errorf("too many files not exists")
+var ErrTooLargeDifferenceErr = fmt.Errorf("too many files not exists")
 
 type SyncPair struct {
 	// Src full path to source file
@@ -64,8 +62,6 @@ type SyncCommand struct {
 	// SyncPairs (src, dst) contain full source and destination paths
 	// for synchronized objects
 	SyncPairs []SyncPair
-
-	log *logrus.Logger
 }
 
 func MakeSyncCommand(SrcDiffPercent int) SyncCommand {
@@ -131,7 +127,7 @@ func (s *SyncCommand) prepare(src SyncMeta, dst SyncMeta) (err error) {
 
 		// domain directories are different - break
 		// return signal error
-		return TooLargeDifferenceErr
+		return ErrTooLargeDifferenceErr
 	}
 
 	for dirName, directory := range src.Dirs {
@@ -240,22 +236,19 @@ func (s *SyncCommand) configureSyncActions(
 			syncPair.Perm = dst.Files[k].Perm
 		}
 
-		if _, ok := dst.Files[k]; ok {
-			delete(dst.Files, k)
-		}
-
+		delete(dst.Files, k)
 		s.SyncPairs = append(s.SyncPairs, syncPair)
 	}
 
-	for k, _ := range dst.Files {
+	for f := range dst.Files {
 
-		fPath, err = MergePath(s.prepareRoot(dst.NestedPath), "/", k)
+		fPath, err = MergePath(s.prepareRoot(dst.NestedPath), "/", f)
 		if err != nil {
 			return err
 		}
 
 		// make del key
-		if delKey, err = MergePath(dst.Name, k); err != nil {
+		if delKey, err = MergePath(dst.Name, f); err != nil {
 			return err
 		}
 

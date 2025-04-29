@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/go-playground/validator/v10"
+	validator "github.com/go-playground/validator/v10"
 	"github.com/sirupsen/logrus"
 	"net/http"
 	"sync"
