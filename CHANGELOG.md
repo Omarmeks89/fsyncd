@@ -1,4 +1,14 @@
 <!-- insertion marker -->
+## Unreleased
+
+<small>[Compare with latest](https://github.com/Omarmeks89/fsyncd/compare/v0.1.0-0...HEAD)</small>
+
+### Features
+
+- add TLS support, now we can update local config only ([2afc6dc](https://github.com/Omarmeks89/fsyncd/commit/2afc6dc00207ffed42edf04809b7bb57f4ef593c) by Егор Марков).
+
+<!-- insertion marker -->
+
 ## [v0.1.0-0](https://github.com/Omarmeks89/fsyncd/releases/tag/v0.1.0-0) - 2025-04-21
 
 <small>[Compare with first commit](https://github.com/Omarmeks89/fsyncd/compare/5d8003c1e1ee6840838a70861f9c5d43f3986b87...v0.1.0-0)</small>

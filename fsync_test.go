@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"github.com/stretchr/testify/require"
 	"sort"
 	"testing"
@@ -78,8 +77,6 @@ func TestSyncCommand_configureSyncActions(t *testing.T) {
 			tt.name, func(t *testing.T) {
 				cmd := MakeSyncCommand(tt.diffPercent)
 				_ = cmd.configureSyncActions(tt.srcD, tt.dstD)
-
-				fmt.Printf("%+v, %+v\n", cmd.FilesToDelete, tt.waitToDelete)
 
 				require.Equal(t, tt.waitToDelete, cmd.FilesToDelete)
 			},
