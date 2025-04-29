@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"github.com/gin-contrib/cors"
@@ -69,11 +70,12 @@ type LoaderUpdater interface {
 
 // Server used for handle API
 type Server struct {
-	g   *gin.Engine
-	b   *Block
-	log *logrus.Logger
-	cfg *ServerConfig
-	d   LoaderUpdater
+	g      *gin.Engine
+	b      *Block
+	log    *logrus.Logger
+	cfg    *ServerConfig
+	d      LoaderUpdater
+	tlsCfg *tls.Config
 }
 
 // MakeServer factory function for create new server to handle API
@@ -81,6 +83,8 @@ func MakeServer(cfg *ServerConfig, log *logrus.Logger, b *Block) (
 	s *Server,
 	err error,
 ) {
+	var tlsCfg *tls.Config
+
 	if cfg == nil || log == nil || b == nil {
 		return s, fmt.Errorf(
 			"nil configuration attr: c=%p, l=%p, b=%p",
@@ -90,10 +94,18 @@ func MakeServer(cfg *ServerConfig, log *logrus.Logger, b *Block) (
 		)
 	}
 
+	if cfg.TlsKeyPath != "" && cfg.TlsCertPath != "" {
+		tlsCfg = &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+	}
+
 	return &Server{
 		b:   b,
 		log: log,
 		cfg: cfg,
+		// maybe nil
+		tlsCfg: tlsCfg,
 	}, err
 }
 
@@ -146,10 +158,20 @@ func (srv *Server) HandleSyncCommand(c *gin.Context) {
 	}
 }
 
-// UpdateConfiguration command for update server sync configuration
+// UpdateConfiguration command for update server local configuration
+// we can`t update data inside Vault etc.
 func (srv *Server) UpdateConfiguration(c *gin.Context) {
 	var sCfg ChangeSyncConfig
 	var err error
+
+	if srv.cfg.ConfigDriver != DefaultDriver {
+		// change config inside Vault and other
+		// external services not allowed
+		_ = c.AbortWithError(
+			http.StatusUnprocessableEntity,
+			errors.New("update configuration not support by current driver"),
+		)
+	}
 
 	// Validate request
 	if err = c.BindJSON(&sCfg); err != nil {
@@ -197,11 +219,11 @@ func (srv *Server) Health(c *gin.Context) {
 }
 
 // Run server
-func (srv *Server) Run(ctx context.Context) (err error) {
+func (srv *Server) Run(ctx context.Context, cancel func()) (err error) {
 	// setup gin router
 
 	if srv.d == nil {
-		return fmt.Errorf("config driver not set")
+		return errors.New("config driver not set")
 	}
 
 	if err = srv.setup(); err != nil {
@@ -216,15 +238,31 @@ func (srv *Server) Run(ctx context.Context) (err error) {
 		WriteTimeout: srv.cfg.ConnWriteTimeout,
 	}
 
+	if srv.tlsCfg != nil {
+		server.TLSConfig = srv.tlsCfg
+	}
+
 	go func() {
-		err = server.ListenAndServe()
+		// try to start with TLS
+		if srv.tlsCfg != nil {
+			srv.log.Debugf("starting by https")
+			err = server.ListenAndServeTLS(
+				srv.cfg.TlsCertPath,
+				srv.cfg.TlsKeyPath,
+			)
+		} else {
+			srv.log.Debugf("starting by http")
+			err = server.ListenAndServe()
+		}
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			// if server exit with an error we have to
+			// cancel execution and fell down
+			cancel()
 			srv.log.Error(err)
 		}
 	}()
 
 	<-ctx.Done()
-
 	srv.log.Debugf("shutting down gracefully, press Ctrl + C to force")
 
 	nc, cancel := context.WithTimeout(

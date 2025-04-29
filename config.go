@@ -11,8 +11,15 @@ import (
 )
 
 // DefaultConfigName for detect config file
-const DefaultConfigName = "fsync.yml"
-const DriverConfigFilename = "driver_config.yml"
+const (
+	DefaultConfigName    = "fsync.yml"
+	DriverConfigFilename = "driver_config.yml"
+
+	// drivers
+
+	DefaultDriver = "default"
+	VaultDriver   = "vault"
+)
 
 // ServerConfig contains all required server parameters
 type ServerConfig struct {

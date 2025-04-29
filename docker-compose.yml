@@ -12,6 +12,10 @@ services:
         target: /fsync.yml
       - source: fsyncd-sync-driver
         target: /driver_config.yml
+      - source: fsyncd-crt
+        target: /certs/fsyncd.crt
+      - source: fsyncd-key
+        target: /certs/fsyncd.key
     deploy:
       replicas: 1
       resources:
@@ -65,6 +69,10 @@ configs:
     file: ./fsync.yml
   fsyncd-sync-driver:
     file: ./driver_config.yml
+  fsyncd-key:
+    file: ./certs/fsyncd.key
+  fsyncd-crt:
+    file: ./certs/fsyncd.crt
 
 volumes:
   vault-data:
