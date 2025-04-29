@@ -10,6 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	validator "github.com/go-playground/validator/v10"
 	"github.com/sirupsen/logrus"
+	"io"
+	"log"
 	"net/http"
 	"sync"
 )
@@ -66,6 +68,24 @@ func (b *Block) Unlock() bool {
 type LoaderUpdater interface {
 	LoadSyncConfig() (s SyncConfig, err error)
 	UpdateSyncConfig(config SyncConfig) (err error)
+}
+
+// LogWriter is a wrapper implement io.Writer interface
+// to set structured logging for gin server
+type LogWriter func([]byte) (int, error)
+
+// NewLogWriter is a factory function for LogWriter
+func NewLogWriter(log *logrus.Logger) io.Writer {
+	return LogWriter(
+		func(bytes []byte) (n int, err error) {
+			log.Debugf("%s\n", bytes)
+			return n, err
+		},
+	)
+}
+
+func (lw LogWriter) Write(data []byte) (int, error) {
+	return lw(data)
 }
 
 // Server used for handle API
@@ -236,6 +256,7 @@ func (srv *Server) Run(ctx context.Context, cancel func()) (err error) {
 		Handler:      srv.g,
 		ReadTimeout:  srv.cfg.ConnReadTimeout,
 		WriteTimeout: srv.cfg.ConnWriteTimeout,
+		ErrorLog:     log.New(srv.log.Writer(), "-", int(srv.log.Level)),
 	}
 
 	if srv.tlsCfg != nil {
@@ -280,8 +301,9 @@ func (srv *Server) Run(ctx context.Context, cancel func()) (err error) {
 }
 
 func (srv *Server) setup() (err error) {
-	// set loglevel for gin
-	gin.SetMode(gin.DebugMode)
+	// set loglevel and logger for gin
+	gin.SetMode(gin.ReleaseMode)
+	gin.DefaultWriter = NewLogWriter(srv.log)
 
 	srv.g = gin.Default()
 
@@ -301,7 +323,7 @@ func (srv *Server) setup() (err error) {
 	srv.g.PATCH("/api/v1/sync/directories", srv.HandleSyncCommand)
 
 	// register handler for update server config
-	srv.g.PATCH("/api/v1/sync/config/update", srv.UpdateConfiguration)
+	srv.g.PATCH("/api/v1/sync/config", srv.UpdateConfiguration)
 
 	// register handler for return actual server config
 	srv.g.GET("/api/v1/sync/config", srv.GetCurrentConfig)

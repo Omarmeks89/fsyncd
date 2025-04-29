@@ -19,7 +19,7 @@ var cfgDrivers = map[string]ConfigDriver{
 }
 
 func main() {
-	var cfg = new(ServerConfig)
+	var cfg = &ServerConfig{}
 	var logger *logrus.Logger
 	var err error
 	var server *Server
@@ -37,30 +37,30 @@ func main() {
 
 	timeGen := SyncTimeGenerator{}
 	if err = timeGen.SetLocalTime(cfg.Location); err != nil {
-		logrus.Fatal(err)
+		logger.Fatal(err)
 	}
 
-	logrus.Infof("location set: %+v\n", timeGen.location)
+	logger.Infof("location set: %+v\n", timeGen.location)
 
 	// load sync config
 	driver, ok := cfgDrivers[cfg.ConfigDriver]
 	if !ok {
-		logrus.Fatalf("unsupported config driver '%s'\n", cfg.ConfigDriver)
+		logger.Fatalf("unsupported config driver '%s'\n", cfg.ConfigDriver)
 	}
 
 	if syncCfg, err = driver.LoadSyncConfig(); err != nil {
-		logrus.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	// create sync operation lock (block)
 	block := MakeBlock()
 	if server, err = MakeServer(cfg, logger, block); err != nil {
-		logrus.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	// make time generator for sync at wished time
 	if err = timeGen.SetupSyncTime(syncCfg.SyncTime); err != nil {
-		logrus.Fatal(err)
+		logger.Fatal(err)
 	}
 
 	sCtx, stop := signal.NotifyContext(
@@ -72,12 +72,12 @@ func main() {
 
 	// run sync at start
 	if err = SyncDirectories(sCtx, logger, syncCfg); err != nil {
-		logrus.Error(err)
+		logger.Error(err)
 	}
 
 	syncScheduler, sErr := MakeScheduler(driver, &timeGen)
 	if sErr != nil {
-		logrus.Fatal(err)
+		logger.Fatal(err)
 	}
 	server.SetConfigDriver(driver)
 
@@ -98,6 +98,6 @@ func main() {
 	)
 
 	if err = g.Wait(); err != nil {
-		logrus.Fatal(err)
+		logger.Fatal(err)
 	}
 }

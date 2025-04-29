@@ -420,13 +420,7 @@ func (s SyncScheduler) SyncByTimer(
 				if tx, err = s.tg.GenerateInterval(); err != nil {
 					return err
 				}
-				log.WithFields(
-					logrus.Fields{
-						"stage":    "reset_timer",
-						"state":    "finished",
-						"interval": tx,
-					},
-				).Debug("reset sync interval")
+				log.Debug("reset sync interval")
 
 				t.Reset(tx)
 			}
