@@ -4,7 +4,7 @@ port: 6767
 swagger_enabled: true
 swagger_port: 6768
 
-# possible drivers: default, vault
+# possible drivers: default, vault-data
 config_driver: "default"
 location: "Europe/Moscow"
 

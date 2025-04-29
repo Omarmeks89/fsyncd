@@ -3,6 +3,7 @@
 services:
   fsyncd:
     image: fsyncd:v0.1.0-1.a
+    container_name: fsyncd
     command: ./fsyncd/fsyncd
     ports:
       - 6767:6767
@@ -16,13 +17,46 @@ services:
       resources:
         limits:
           cpus: 0.10
-          memory: 50M
+          # 64 mb arena for Linux
+          memory: 100M
         reservations:
           cpus: 0.10
-          memory: 10M
+          memory: 100M
     volumes:
       # mount root directory path
       - /home:/home
+    networks:
+      - fsync-net
+
+  vault:
+    image: vault:1.12.7
+    container_name: vault
+    healthcheck:
+      test: ["CMD", "vault", "status"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    command: server -dev
+    ports:
+      - 8200:8200
+    environment:
+      VAULT_ADDR: "http://0.0.0.0:8200"
+      VAULT_API_ADDR: "http://0.0.0.0:8200"
+    cap_add:
+      # do not swap
+      # disable if you use any custom plugin
+      - IPC_LOCK
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: 0.10
+          memory: 300M
+        reservations:
+          cpus: 0.10
+          memory: 300M
+    volumes:
+      - vault-data:/vault/file
     networks:
       - fsync-net
 
@@ -31,6 +65,9 @@ configs:
     file: ./fsync.yml
   fsyncd-sync-driver:
     file: ./driver_config.yml
+
+volumes:
+  vault-data:
 
 networks:
   fsync-net:
